@@ -136,7 +136,10 @@ namespace SpawnDev.MultiMedia.Windows
             EnsureMFInitialized();
             var devices = new List<MediaDeviceInfo>();
 
-            // Video devices via MediaFoundation
+            // Video devices - merge MediaFoundation + DirectShow for full coverage
+            // MF finds hardware cameras; DirectShow also finds virtual cameras (OBS, etc.)
+            var seenVideoIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
             var videoActivates = EnumerateVideoDeviceActivates();
             foreach (var (activate, label, symbolicLink) in videoActivates)
             {
@@ -147,7 +150,25 @@ namespace SpawnDev.MultiMedia.Windows
                     Label = label,
                     GroupId = "",
                 });
+                seenVideoIds.Add(symbolicLink);
                 Marshal.ReleaseComObject(activate);
+            }
+
+            // DirectShow catches virtual cameras that MF may miss
+            var dshowDevices = EnumerateDirectShowVideoDevices();
+            foreach (var (label, devicePath) in dshowDevices)
+            {
+                if (!seenVideoIds.Contains(devicePath))
+                {
+                    devices.Add(new MediaDeviceInfo
+                    {
+                        DeviceId = devicePath,
+                        Kind = "videoinput",
+                        Label = label,
+                        GroupId = "",
+                    });
+                    seenVideoIds.Add(devicePath);
+                }
             }
 
             // Audio capture devices (microphones) via WASAPI
@@ -314,6 +335,122 @@ namespace SpawnDev.MultiMedia.Windows
             }
 
             return result.ToArray();
+        }
+
+        /// <summary>
+        /// Enumerates video capture devices via DirectShow ICreateDevEnum.
+        /// Finds virtual cameras (OBS Virtual Camera, ManyCam, etc.) that
+        /// MFEnumDeviceSources may not report.
+        /// </summary>
+        internal static (string label, string devicePath)[] EnumerateDirectShowVideoDevices()
+        {
+            var result = new List<(string, string)>();
+
+            try
+            {
+                var clsid = DShow.CLSID_SystemDeviceEnum;
+                var iid = typeof(ICreateDevEnum).GUID;
+                int hr = DShow.CoCreateInstance(ref clsid, IntPtr.Zero, WASAPI.CLSCTX_ALL, ref iid, out var enumObj);
+                if (hr < 0) return result.ToArray();
+
+                var devEnum = (ICreateDevEnum)enumObj;
+                try
+                {
+                    var category = DShow.CLSID_VideoInputDeviceCategory;
+                    hr = devEnum.CreateClassEnumerator(ref category, out var monikerEnum, 0);
+                    if (hr != 0 || monikerEnum == null) return result.ToArray();
+
+                    try
+                    {
+                        // Manual vtable call for IEnumMoniker.Next - the managed COM interop
+                        // has marshaling issues with the IMoniker[] out-parameter.
+                        while (true)
+                        {
+                            var pMoniker = IntPtr.Zero;
+                            uint fetched = 0;
+                            if (!EnumMonikerNext(monikerEnum, ref pMoniker, ref fetched))
+                                break;
+                            if (fetched == 0 || pMoniker == IntPtr.Zero)
+                                break;
+
+                            var moniker = (IMoniker)Marshal.GetObjectForIUnknown(pMoniker);
+                            Marshal.Release(pMoniker);
+
+                            try
+                            {
+                                var iidBag = typeof(IPropertyBag).GUID;
+                                hr = moniker.BindToStorage(IntPtr.Zero, IntPtr.Zero, ref iidBag, out var bagObj);
+                                if (hr < 0 || bagObj == null) continue;
+
+                                var bag = (IPropertyBag)bagObj;
+                                try
+                                {
+                                    string label = "Video Device";
+                                    string devicePath = "";
+
+                                    if (bag.Read("FriendlyName", out var nameVal, IntPtr.Zero) == 0 && nameVal is string name)
+                                        label = name;
+
+                                    if (bag.Read("DevicePath", out var pathVal, IntPtr.Zero) == 0 && pathVal is string path)
+                                        devicePath = path;
+                                    else
+                                        devicePath = $"dshow:video:{label}";
+
+                                    result.Add((label, devicePath));
+                                }
+                                finally
+                                {
+                                    Marshal.ReleaseComObject(bag);
+                                }
+                            }
+                            finally
+                            {
+                                Marshal.ReleaseComObject(moniker);
+                            }
+                        }
+                    }
+                    finally
+                    {
+                        Marshal.ReleaseComObject(monikerEnum);
+                    }
+                }
+                finally
+                {
+                    Marshal.ReleaseComObject(devEnum);
+                }
+            }
+            catch (Exception)
+            {
+                // DirectShow not available
+            }
+
+            return result.ToArray();
+        }
+
+        /// <summary>
+        /// Manual vtable call for IEnumMoniker.Next(1, ...) to work around
+        /// .NET COM interop marshaling issues with IMoniker[] array parameters.
+        /// </summary>
+        private static unsafe bool EnumMonikerNext(object enumMoniker, ref IntPtr pMoniker, ref uint fetched)
+        {
+            var punk = Marshal.GetIUnknownForObject(enumMoniker);
+            try
+            {
+                var vtable = Marshal.ReadIntPtr(punk);
+                // IEnumMoniker vtable: [0]QI [1]AddRef [2]Release [3]Next [4]Skip [5]Reset [6]Clone
+                var nextFn = Marshal.ReadIntPtr(vtable, 3 * IntPtr.Size);
+                fixed (IntPtr* pMon = &pMoniker)
+                fixed (uint* pFetch = &fetched)
+                {
+                    var hr = ((delegate* unmanaged[Stdcall]<IntPtr, uint, IntPtr*, uint*, int>)nextFn)(
+                        punk, 1, pMon, pFetch);
+                    return hr == 0;
+                }
+            }
+            finally
+            {
+                Marshal.Release(punk);
+            }
         }
     }
 }
