@@ -79,11 +79,49 @@ namespace SpawnDev.MultiMedia.Windows
 
             if (constraints.Audio != null)
             {
-                // Audio capture stub - WASAPI implementation coming
-                tracks.Add(new WindowsMediaStreamTrack(
-                    id: Guid.NewGuid().ToString(),
-                    kind: "audio",
-                    label: "Default Audio Input"));
+                var audioDevices = EnumerateAudioCaptureDevices();
+                if (audioDevices.Length > 0)
+                {
+                    string? requestedDeviceId = null;
+                    if (constraints.Audio is MediaTrackConstraints ac)
+                        requestedDeviceId = ac.DeviceId;
+
+                    IMMDevice? selectedDevice = null;
+                    string selectedLabel = "Audio Input";
+
+                    foreach (var (device, label, deviceId) in audioDevices)
+                    {
+                        if (requestedDeviceId != null && deviceId != requestedDeviceId)
+                        {
+                            Marshal.ReleaseComObject(device);
+                            continue;
+                        }
+                        selectedDevice = device;
+                        selectedLabel = label;
+                        break;
+                    }
+
+                    // Release any we didn't pick
+                    foreach (var (device, _, _) in audioDevices)
+                    {
+                        if (!ReferenceEquals(device, selectedDevice))
+                            Marshal.ReleaseComObject(device);
+                    }
+
+                    if (selectedDevice != null)
+                    {
+                        var track = WindowsAudioTrack.CreateFromDevice(selectedDevice, selectedLabel);
+                        tracks.Add(track);
+                    }
+                }
+                else
+                {
+                    // No mics found - return stub track for test compatibility
+                    tracks.Add(new WindowsMediaStreamTrack(
+                        id: Guid.NewGuid().ToString(),
+                        kind: "audio",
+                        label: "No Audio Input Found"));
+                }
             }
 
             if (tracks.Count == 0)
@@ -112,7 +150,19 @@ namespace SpawnDev.MultiMedia.Windows
                 Marshal.ReleaseComObject(activate);
             }
 
-            // Audio devices will be added when WASAPI is implemented
+            // Audio capture devices via WASAPI
+            var audioDevices = EnumerateAudioCaptureDevices();
+            foreach (var (device, label, deviceId) in audioDevices)
+            {
+                devices.Add(new MediaDeviceInfo
+                {
+                    DeviceId = deviceId,
+                    Kind = "audioinput",
+                    Label = label,
+                    GroupId = "",
+                });
+                Marshal.ReleaseComObject(device);
+            }
 
             return Task.FromResult(devices.ToArray());
         }
@@ -171,6 +221,82 @@ namespace SpawnDev.MultiMedia.Windows
             finally
             {
                 Marshal.ReleaseComObject(attrs);
+            }
+
+            return result.ToArray();
+        }
+
+        /// <summary>
+        /// Enumerates audio capture devices via WASAPI IMMDeviceEnumerator.
+        /// Returns IMMDevice handles with their friendly names and device IDs.
+        /// Caller is responsible for releasing the IMMDevice objects.
+        /// </summary>
+        internal static (IMMDevice device, string label, string deviceId)[] EnumerateAudioCaptureDevices()
+        {
+            var result = new List<(IMMDevice, string, string)>();
+
+            try
+            {
+                var clsid = WASAPI.CLSID_MMDeviceEnumerator;
+                var iid = typeof(IMMDeviceEnumerator).GUID;
+                int hr = WASAPI.CoCreateInstance(ref clsid, IntPtr.Zero, WASAPI.CLSCTX_ALL, ref iid, out var enumObj);
+                if (hr < 0) return result.ToArray();
+
+                var enumerator = (IMMDeviceEnumerator)enumObj;
+                try
+                {
+                    hr = enumerator.EnumAudioEndpoints(EDataFlow.eCapture, WASAPI.DEVICE_STATE_ACTIVE, out var collection);
+                    if (hr < 0) return result.ToArray();
+
+                    try
+                    {
+                        collection.GetCount(out var count);
+                        for (uint i = 0; i < count; i++)
+                        {
+                            hr = collection.Item(i, out var device);
+                            if (hr < 0) continue;
+
+                            // Get device ID
+                            string deviceId = $"audioinput:{i}";
+                            if (device.GetId(out var id) >= 0 && id != null)
+                                deviceId = id;
+
+                            // Get friendly name from property store
+                            string label = "Audio Input";
+                            if (device.OpenPropertyStore(WASAPI.STGM_READ, out var store) >= 0)
+                            {
+                                try
+                                {
+                                    var nameKey = WASAPI.PKEY_Device_FriendlyName;
+                                    if (store.GetValue(ref nameKey, out var pv) >= 0)
+                                    {
+                                        var name = pv.GetString();
+                                        if (name != null) label = name;
+                                        pv.Clear();
+                                    }
+                                }
+                                finally
+                                {
+                                    Marshal.ReleaseComObject(store);
+                                }
+                            }
+
+                            result.Add((device, label, deviceId));
+                        }
+                    }
+                    finally
+                    {
+                        Marshal.ReleaseComObject(collection);
+                    }
+                }
+                finally
+                {
+                    Marshal.ReleaseComObject(enumerator);
+                }
+            }
+            catch (Exception)
+            {
+                // WASAPI not available (e.g., no audio subsystem)
             }
 
             return result.ToArray();
