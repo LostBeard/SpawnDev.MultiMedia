@@ -31,50 +31,55 @@ namespace SpawnDev.MultiMedia.Windows
             if (constraints.Video != null)
             {
                 EnsureMFInitialized();
-                var videoDevices = EnumerateVideoDeviceActivates();
-                if (videoDevices.Length > 0)
+                string? requestedDeviceId = null;
+                if (constraints.Video is MediaTrackConstraints vc)
+                    requestedDeviceId = vc.DeviceId;
+
+                IMediaStreamTrack? videoTrack = null;
+
+                // Try MediaFoundation first (hardware cameras)
+                var mfDevices = EnumerateVideoDeviceActivates();
+                foreach (var (activate, label, symbolicLink) in mfDevices)
                 {
-                    // Use first available camera (or match deviceId constraint)
-                    string? requestedDeviceId = null;
-                    if (constraints.Video is MediaTrackConstraints vc)
-                        requestedDeviceId = vc.DeviceId;
-
-                    IMFActivate? selectedActivate = null;
-                    string selectedLabel = "Video Input";
-
-                    foreach (var (activate, label, symbolicLink) in videoDevices)
+                    if (videoTrack != null || (requestedDeviceId != null && symbolicLink != requestedDeviceId))
                     {
-                        if (requestedDeviceId != null && symbolicLink != requestedDeviceId)
+                        Marshal.ReleaseComObject(activate);
+                        continue;
+                    }
+                    videoTrack = WindowsVideoTrack.CreateFromActivate(activate, label, constraints.Video as MediaTrackConstraints);
+                }
+
+                // If MF had no match, try DirectShow (virtual cameras like OBS)
+                if (videoTrack == null)
+                {
+                    var dshowDevices = EnumerateDirectShowVideoDevices();
+                    System.Diagnostics.Debug.WriteLine($"DShow devices for capture: {dshowDevices.Length}");
+                    foreach (var (label, devicePath, moniker) in dshowDevices)
+                    {
+                        if (videoTrack != null || (requestedDeviceId != null && devicePath != requestedDeviceId))
                         {
-                            Marshal.ReleaseComObject(activate);
+                            if (moniker != null) Marshal.ReleaseComObject(moniker);
                             continue;
                         }
-                        selectedActivate = activate;
-                        selectedLabel = label;
-                        break;
-                    }
-
-                    // Release any we didn't pick
-                    foreach (var (activate, _, _) in videoDevices)
-                    {
-                        if (!ReferenceEquals(activate, selectedActivate))
-                            Marshal.ReleaseComObject(activate);
-                    }
-
-                    if (selectedActivate != null)
-                    {
-                        var track = WindowsVideoTrack.CreateFromActivate(selectedActivate, selectedLabel, constraints.Video as MediaTrackConstraints);
-                        tracks.Add(track);
+                        if (moniker != null)
+                        {
+                            try
+                            {
+                                videoTrack = WindowsVideoTrack.CreateFromDirectShowMoniker(moniker, label, constraints.Video as MediaTrackConstraints);
+                            }
+                            catch (Exception ex)
+                            {
+                                System.Diagnostics.Debug.WriteLine($"DirectShow capture failed for '{label}': {ex.Message}");
+                                try { Marshal.ReleaseComObject(moniker); } catch { }
+                            }
+                        }
                     }
                 }
+
+                if (videoTrack != null)
+                    tracks.Add(videoTrack);
                 else
-                {
-                    // No cameras found - return stub track for test compatibility
-                    tracks.Add(new WindowsMediaStreamTrack(
-                        id: Guid.NewGuid().ToString(),
-                        kind: "video",
-                        label: "No Camera Found"));
-                }
+                    tracks.Add(new WindowsMediaStreamTrack(Guid.NewGuid().ToString(), "video", "No Camera Found"));
             }
 
             if (constraints.Audio != null)
@@ -156,7 +161,7 @@ namespace SpawnDev.MultiMedia.Windows
 
             // DirectShow catches virtual cameras that MF may miss
             var dshowDevices = EnumerateDirectShowVideoDevices();
-            foreach (var (label, devicePath) in dshowDevices)
+            foreach (var (label, devicePath, dshowMoniker) in dshowDevices)
             {
                 if (!seenVideoIds.Contains(devicePath))
                 {
@@ -169,6 +174,7 @@ namespace SpawnDev.MultiMedia.Windows
                     });
                     seenVideoIds.Add(devicePath);
                 }
+                if (dshowMoniker != null) Marshal.ReleaseComObject(dshowMoniker);
             }
 
             // Audio capture devices (microphones) via WASAPI
@@ -342,9 +348,9 @@ namespace SpawnDev.MultiMedia.Windows
         /// Finds virtual cameras (OBS Virtual Camera, ManyCam, etc.) that
         /// MFEnumDeviceSources may not report.
         /// </summary>
-        internal static (string label, string devicePath)[] EnumerateDirectShowVideoDevices()
+        internal static (string label, string devicePath, object? moniker)[] EnumerateDirectShowVideoDevices()
         {
-            var result = new List<(string, string)>();
+            var result = new List<(string, string, object?)>();
 
             try
             {
@@ -396,7 +402,8 @@ namespace SpawnDev.MultiMedia.Windows
                                     else
                                         devicePath = $"dshow:video:{label}";
 
-                                    result.Add((label, devicePath));
+                                    result.Add((label, devicePath, (object)moniker));
+                                    moniker = null!; // Don't release - caller owns it
                                 }
                                 finally
                                 {
@@ -405,7 +412,7 @@ namespace SpawnDev.MultiMedia.Windows
                             }
                             finally
                             {
-                                Marshal.ReleaseComObject(moniker);
+                                if (moniker != null) Marshal.ReleaseComObject(moniker);
                             }
                         }
                     }

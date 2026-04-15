@@ -128,7 +128,11 @@ namespace SpawnDev.MultiMedia.Windows
             denominator = (int)(packed & 0xFFFFFFFF);
         }
 
-        // Helper: map MF subtype GUID to our VideoPixelFormat
+        // DirectShow MEDIASUBTYPE_RGB32 (different GUID from MF's MFVideoFormat_RGB32)
+        public static readonly Guid MEDIASUBTYPE_RGB32_DS =
+            new("E436EB7E-524F-11CE-9F53-0020AF0BA770");
+
+        // Helper: map MF or DirectShow subtype GUID to our VideoPixelFormat
         public static VideoPixelFormat? SubtypeToPixelFormat(Guid subtype)
         {
             if (subtype == MFVideoFormat_NV12) return VideoPixelFormat.NV12;
@@ -136,6 +140,7 @@ namespace SpawnDev.MultiMedia.Windows
             if (subtype == MFVideoFormat_I420) return VideoPixelFormat.I420;
             if (subtype == MFVideoFormat_RGB32) return VideoPixelFormat.BGRA;
             if (subtype == MFVideoFormat_ARGB32) return VideoPixelFormat.BGRA;
+            if (subtype == MEDIASUBTYPE_RGB32_DS) return VideoPixelFormat.BGRA;
             return null;
         }
     }

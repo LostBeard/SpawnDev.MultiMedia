@@ -10,10 +10,21 @@ namespace SpawnDev.MultiMedia.Windows
     [SupportedOSPlatform("windows")]
     public class WindowsVideoTrack : IVideoTrack
     {
+        // MediaFoundation capture (hardware cameras)
         private IMFActivate? _activate;
         private IMFMediaSource? _mediaSource;
         private IMFSourceReader? _sourceReader;
         private Thread? _captureThread;
+
+        // DirectShow capture (virtual cameras - OBS, Quest, etc.)
+        private object? _dsGraphBuilder;
+        private object? _dsCaptureGraphBuilder;
+        private object? _dsGrabberComObject; // SampleGrabber - one RCW, used as ISampleGrabber and IBaseFilter
+        private object? _dsSourceFilter;
+        private object? _dsNullRenderer;
+        private SampleGrabberCallback? _dsCallback;
+
+        // Shared state
         private volatile bool _capturing;
         private bool _disposed;
         private bool _enabled = true;
@@ -117,6 +128,249 @@ namespace SpawnDev.MultiMedia.Windows
             track._captureThread.Start();
 
             return track;
+        }
+
+        /// <summary>
+        /// Creates a video track from a DirectShow moniker using a full capture graph.
+        /// For virtual cameras (OBS, ManyCam, Quest) that are DirectShow-only.
+        /// Builds: Source -> SampleGrabber -> NullRenderer, with BufferCB callback for frames.
+        /// </summary>
+        internal static WindowsVideoTrack CreateFromDirectShowMoniker(object monikerObj, string label, MediaTrackConstraints? constraints)
+        {
+            var track = new WindowsVideoTrack(label);
+            var moniker = (IMoniker)monikerObj;
+
+            // Step 1: Bind moniker to IBaseFilter (the DirectShow source filter)
+            var iidBaseFilter = DSCapture.IID_IBaseFilter;
+            var hr = moniker.BindToObject(IntPtr.Zero, IntPtr.Zero, ref iidBaseFilter, out var sourceObj);
+            MF.ThrowOnFailure(hr);
+            track._dsSourceFilter = sourceObj;
+            var sourceFilter = (IBaseFilter)sourceObj;
+
+            // Step 2: Create FilterGraph -> IGraphBuilder
+            var graphObj = Activator.CreateInstance(
+                Type.GetTypeFromCLSID(DSCapture.CLSID_FilterGraph)
+                ?? throw new COMException("CLSID_FilterGraph not registered"))
+                ?? throw new COMException("Failed to create FilterGraph");
+            track._dsGraphBuilder = graphObj;
+            var graph = (IGraphBuilder)graphObj;
+
+            // Step 3: Create CaptureGraphBuilder2 and connect to graph
+            var capObj = Activator.CreateInstance(
+                Type.GetTypeFromCLSID(DSCapture.CLSID_CaptureGraphBuilder2)
+                ?? throw new COMException("CLSID_CaptureGraphBuilder2 not registered"))
+                ?? throw new COMException("Failed to create CaptureGraphBuilder2");
+            track._dsCaptureGraphBuilder = capObj;
+            var capBuilder = (ICaptureGraphBuilder2)capObj;
+            MF.ThrowOnFailure(capBuilder.SetFiltergraph(graph));
+
+            // Step 4: Create SampleGrabber and configure for RGB32 (BGRA in memory)
+            var grabObj = Activator.CreateInstance(
+                Type.GetTypeFromCLSID(DSCapture.CLSID_SampleGrabber)
+                ?? throw new COMException("CLSID_SampleGrabber not registered (qedit.dll missing?)"))
+                ?? throw new COMException("Failed to create SampleGrabber");
+            track._dsGrabberComObject = grabObj;
+            var grabber = (ISampleGrabber)grabObj;
+            var grabberFilter = (IBaseFilter)grabObj;
+
+            // Set media type - just Video major type, accept any subtype
+            // DirectShow will negotiate the best format between source and grabber
+            var mt = new DSAMMediaType
+            {
+                majorType = DSCapture.MEDIATYPE_Video,
+            };
+            grabber.SetMediaType(mt);
+
+            // Step 5: Create NullRenderer (sink - discards rendered output)
+            var nullObj = Activator.CreateInstance(
+                Type.GetTypeFromCLSID(DSCapture.CLSID_NullRenderer)
+                ?? throw new COMException("CLSID_NullRenderer not registered"))
+                ?? throw new COMException("Failed to create NullRenderer");
+            track._dsNullRenderer = nullObj;
+            var nullRenderer = (IBaseFilter)nullObj;
+
+            // Step 6: Add all filters to the graph
+            MF.ThrowOnFailure(graph.AddFilter(sourceFilter, "Source"));
+            MF.ThrowOnFailure(graph.AddFilter(grabberFilter, "SampleGrabber"));
+            MF.ThrowOnFailure(graph.AddFilter(nullRenderer, "NullRenderer"));
+
+            // Step 7: RenderStream connects Source -> SampleGrabber -> NullRenderer
+            hr = capBuilder.RenderStream(
+                DSCapture.PIN_CATEGORY_CAPTURE,
+                DSCapture.MEDIATYPE_Video,
+                sourceObj,        // source as IUnknown
+                grabberFilter,    // intermediate
+                nullRenderer);    // renderer
+            MF.ThrowOnFailure(hr);
+
+            // Step 8: Read actual dimensions from the connected media type
+            var connectedMt = new DSAMMediaType();
+            hr = grabber.GetConnectedMediaType(connectedMt);
+            if (hr >= 0 && connectedMt.formatPtr != IntPtr.Zero)
+            {
+                try
+                {
+                    if (connectedMt.formatType == DSCapture.FORMAT_VideoInfo &&
+                        connectedMt.formatSize >= Marshal.SizeOf<VIDEOINFOHEADER>())
+                    {
+                        var vih = Marshal.PtrToStructure<VIDEOINFOHEADER>(connectedMt.formatPtr);
+                        track.Width = vih.bmiHeader.biWidth;
+                        track.Height = Math.Abs(vih.bmiHeader.biHeight);
+                        if (vih.AvgTimePerFrame > 0)
+                            track.FrameRate = 10_000_000.0 / vih.AvgTimePerFrame;
+                    }
+                    else if (connectedMt.formatSize >= 72 + Marshal.SizeOf<BITMAPINFOHEADER>())
+                    {
+                        // VideoInfo2 or similar - bmiHeader at offset 72
+                        var bmi = Marshal.PtrToStructure<BITMAPINFOHEADER>(connectedMt.formatPtr + 72);
+                        track.Width = bmi.biWidth;
+                        track.Height = Math.Abs(bmi.biHeight);
+                    }
+                }
+                finally
+                {
+                    connectedMt.Free();
+                }
+            }
+
+            if (track.Width == 0) track.Width = 640;
+            if (track.Height == 0) track.Height = 480;
+            if (track.FrameRate <= 0) track.FrameRate = 30;
+
+            // Detect actual pixel format from connected media type subtype
+            var fmtMt = new DSAMMediaType();
+            if (grabber.GetConnectedMediaType(fmtMt) >= 0)
+            {
+                track._outputFormat = MF.SubtypeToPixelFormat(fmtMt.subType) ?? VideoPixelFormat.NV12;
+                fmtMt.Free();
+            }
+            else
+            {
+                // Guess from frame size: NV12 = w*h*1.5, YUY2 = w*h*2, BGRA = w*h*4
+                track._outputFormat = VideoPixelFormat.NV12;
+            }
+
+            // Step 9: Enable buffered sampling and configure callback
+            // SetBufferSamples AFTER RenderStream (graph must be connected first)
+            grabber.SetBufferSamples(true);
+            grabber.SetOneShot(false);
+
+            // Step 10: Start the capture graph and wait for Running state
+            var mc = (IDShowMediaControl)graphObj;
+            MF.ThrowOnFailure(mc.Run());
+
+            // Wait for graph to actually enter Running state (not just transitioning)
+            mc.GetState(3000, out _); // Block up to 3s for state transition
+
+            track._capturing = true;
+
+            // Step 11: Start polling thread to read buffered samples
+            track._captureThread = new Thread(() => track.DirectShowCaptureLoop(grabber))
+            {
+                IsBackground = true,
+                Name = $"DShow_Capture_{label}",
+            };
+            track._captureThread.Start();
+
+            return track;
+        }
+
+        /// <summary>
+        /// ISampleGrabberCB implementation that receives raw frame data from DirectShow
+        /// and fires OnFrame events on the WindowsVideoTrack.
+        /// </summary>
+        [System.Runtime.InteropServices.ComVisible(true)]
+        private sealed class SampleGrabberCallback : ISampleGrabberCB
+        {
+            private readonly WindowsVideoTrack _track;
+
+            public SampleGrabberCallback(WindowsVideoTrack track)
+            {
+                _track = track;
+            }
+
+            public int SampleCB(double sampleTime, IntPtr pSample)
+            {
+                return 0; // Not used - we use BufferCB
+            }
+
+            public int BufferCB(double sampleTime, IntPtr pBuffer, int bufferLen)
+            {
+                if (!_track._capturing || !_track._enabled || _track.OnFrame == null || bufferLen <= 0)
+                    return 0;
+
+                var data = new byte[bufferLen];
+                Marshal.Copy(pBuffer, data, 0, bufferLen);
+
+                long timestamp = (long)(sampleTime * 10_000_000);
+
+                var frame = new VideoFrame(
+                    _track.Width, _track.Height, _track._outputFormat,
+                    new ReadOnlyMemory<byte>(data), timestamp);
+
+                _track.OnFrame.Invoke(frame);
+                return 0;
+            }
+        }
+
+        /// <summary>
+        /// Polling loop for DirectShow capture. Reads buffered samples from the SampleGrabber.
+        /// Used instead of ISampleGrabberCB callback which has COM marshaling issues in .NET.
+        /// </summary>
+        private void DirectShowCaptureLoop(ISampleGrabber grabber)
+        {
+            int targetIntervalMs = FrameRate > 0 ? (int)(1000.0 / FrameRate / 2) : 8; // Poll at 2x frame rate
+            if (targetIntervalMs < 1) targetIntervalMs = 1;
+            if (targetIntervalMs > 33) targetIntervalMs = 33;
+
+            try
+            {
+                while (_capturing)
+                {
+                    Thread.Sleep(targetIntervalMs);
+
+                    // Query the current buffer size
+                    int bufferSize = 0;
+                    var hr = grabber.GetCurrentBuffer(ref bufferSize, IntPtr.Zero);
+                    if (hr < 0 || bufferSize <= 0) continue;
+                    if (!_enabled || OnFrame == null) continue;
+
+                    // Allocate and read the buffer
+                    var bufferPtr = Marshal.AllocHGlobal(bufferSize);
+                    try
+                    {
+                        hr = grabber.GetCurrentBuffer(ref bufferSize, bufferPtr);
+                        if (hr >= 0 && bufferSize > 0)
+                        {
+                            var data = new byte[bufferSize];
+                            Marshal.Copy(bufferPtr, data, 0, bufferSize);
+
+                            var frame = new VideoFrame(
+                                Width, Height, _outputFormat,
+                                new ReadOnlyMemory<byte>(data),
+                                DateTimeOffset.UtcNow.Ticks);
+
+                            OnFrame.Invoke(frame);
+                        }
+                    }
+                    finally
+                    {
+                        Marshal.FreeHGlobal(bufferPtr);
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                // Capture ended
+            }
+            finally
+            {
+                if (_readyState == "live")
+                {
+                    _readyState = "ended";
+                    OnEnded?.Invoke();
+                }
+            }
         }
 
         private void ReadCurrentFormat()
@@ -250,6 +504,13 @@ namespace SpawnDev.MultiMedia.Windows
         {
             if (_readyState == "ended") return;
             _capturing = false;
+
+            // Stop DirectShow graph if active
+            if (_dsGraphBuilder is IDShowMediaControl mc)
+            {
+                try { mc.Stop(); } catch { }
+            }
+
             _readyState = "ended";
             OnEnded?.Invoke();
         }
@@ -271,6 +532,7 @@ namespace SpawnDev.MultiMedia.Windows
             _capturing = false;
             _captureThread?.Join(2000);
 
+            // MediaFoundation cleanup
             if (_sourceReader != null)
             {
                 Marshal.ReleaseComObject(_sourceReader);
@@ -288,6 +550,23 @@ namespace SpawnDev.MultiMedia.Windows
                 Marshal.ReleaseComObject(_activate);
                 _activate = null;
             }
+
+            // DirectShow cleanup
+            if (_dsGraphBuilder is IDShowMediaControl mc)
+            {
+                try { mc.Stop(); } catch { }
+            }
+            if (_dsGrabberComObject is ISampleGrabber sg)
+            {
+                try { sg.SetCallback(null, 1); } catch { }
+            }
+            _dsCallback = null;
+
+            if (_dsNullRenderer != null) { try { Marshal.ReleaseComObject(_dsNullRenderer); } catch { } _dsNullRenderer = null; }
+            if (_dsGrabberComObject != null) { try { Marshal.ReleaseComObject(_dsGrabberComObject); } catch { } _dsGrabberComObject = null; }
+            if (_dsSourceFilter != null) { try { Marshal.ReleaseComObject(_dsSourceFilter); } catch { } _dsSourceFilter = null; }
+            if (_dsCaptureGraphBuilder != null) { try { Marshal.ReleaseComObject(_dsCaptureGraphBuilder); } catch { } _dsCaptureGraphBuilder = null; }
+            if (_dsGraphBuilder != null) { try { Marshal.ReleaseComObject(_dsGraphBuilder); } catch { } _dsGraphBuilder = null; }
 
             if (_readyState == "live")
             {
