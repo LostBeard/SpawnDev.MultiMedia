@@ -79,7 +79,7 @@ namespace SpawnDev.MultiMedia.Windows
 
             if (constraints.Audio != null)
             {
-                var audioDevices = EnumerateAudioCaptureDevices();
+                var audioDevices = EnumerateAudioEndpoints(EDataFlow.eCapture);
                 if (audioDevices.Length > 0)
                 {
                     string? requestedDeviceId = null;
@@ -150,14 +150,28 @@ namespace SpawnDev.MultiMedia.Windows
                 Marshal.ReleaseComObject(activate);
             }
 
-            // Audio capture devices via WASAPI
-            var audioDevices = EnumerateAudioCaptureDevices();
-            foreach (var (device, label, deviceId) in audioDevices)
+            // Audio capture devices (microphones) via WASAPI
+            var audioInputs = EnumerateAudioEndpoints(EDataFlow.eCapture);
+            foreach (var (device, label, deviceId) in audioInputs)
             {
                 devices.Add(new MediaDeviceInfo
                 {
                     DeviceId = deviceId,
                     Kind = "audioinput",
+                    Label = label,
+                    GroupId = "",
+                });
+                Marshal.ReleaseComObject(device);
+            }
+
+            // Audio render devices (speakers/headphones) via WASAPI
+            var audioOutputs = EnumerateAudioEndpoints(EDataFlow.eRender);
+            foreach (var (device, label, deviceId) in audioOutputs)
+            {
+                devices.Add(new MediaDeviceInfo
+                {
+                    DeviceId = deviceId,
+                    Kind = "audiooutput",
                     Label = label,
                     GroupId = "",
                 });
@@ -227,11 +241,11 @@ namespace SpawnDev.MultiMedia.Windows
         }
 
         /// <summary>
-        /// Enumerates audio capture devices via WASAPI IMMDeviceEnumerator.
-        /// Returns IMMDevice handles with their friendly names and device IDs.
+        /// Enumerates audio endpoints via WASAPI IMMDeviceEnumerator.
+        /// Pass eCapture for microphones, eRender for speakers/headphones.
         /// Caller is responsible for releasing the IMMDevice objects.
         /// </summary>
-        internal static (IMMDevice device, string label, string deviceId)[] EnumerateAudioCaptureDevices()
+        internal static (IMMDevice device, string label, string deviceId)[] EnumerateAudioEndpoints(EDataFlow dataFlow)
         {
             var result = new List<(IMMDevice, string, string)>();
 
@@ -245,7 +259,7 @@ namespace SpawnDev.MultiMedia.Windows
                 var enumerator = (IMMDeviceEnumerator)enumObj;
                 try
                 {
-                    hr = enumerator.EnumAudioEndpoints(EDataFlow.eCapture, WASAPI.DEVICE_STATE_ACTIVE, out var collection);
+                    hr = enumerator.EnumAudioEndpoints(dataFlow, WASAPI.DEVICE_STATE_ACTIVE, out var collection);
                     if (hr < 0) return result.ToArray();
 
                     try
@@ -257,12 +271,12 @@ namespace SpawnDev.MultiMedia.Windows
                             if (hr < 0) continue;
 
                             // Get device ID
-                            string deviceId = $"audioinput:{i}";
+                            string deviceId = $"audio:{i}";
                             if (device.GetId(out var id) >= 0 && id != null)
                                 deviceId = id;
 
                             // Get friendly name from property store
-                            string label = "Audio Input";
+                            string label = "Audio Device";
                             if (device.OpenPropertyStore(WASAPI.STGM_READ, out var store) >= 0)
                             {
                                 try

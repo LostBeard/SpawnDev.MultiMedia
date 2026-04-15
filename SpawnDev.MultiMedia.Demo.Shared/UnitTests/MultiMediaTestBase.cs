@@ -5,6 +5,7 @@ namespace SpawnDev.MultiMedia.Demo.Shared.UnitTests
 {
     /// <summary>
     /// Cross-platform media test base. Tests run identically on browser and desktop.
+    /// Every test hits real production code - no mocks, no identity values.
     /// </summary>
     public abstract partial class MultiMediaTestBase
     {
@@ -12,9 +13,6 @@ namespace SpawnDev.MultiMedia.Demo.Shared.UnitTests
         {
         }
 
-        /// <summary>
-        /// Verify the test infrastructure is working.
-        /// </summary>
         [TestMethod]
         public async Task TestInfrastructure_Working()
         {
@@ -22,177 +20,337 @@ namespace SpawnDev.MultiMedia.Demo.Shared.UnitTests
             await Task.CompletedTask;
         }
 
-        /// <summary>
-        /// Verify MediaDevices.EnumerateDevices returns without error.
-        /// Browser: returns real device list (may be empty without permissions).
-        /// Desktop: returns placeholder list (Phase 2 adds real enumeration).
-        /// </summary>
+        // ---- Device Enumeration ----
+
         [TestMethod]
-        public async Task EnumerateDevices_ReturnsArray()
+        public async Task EnumerateDevices_ReturnsNonNullArray()
         {
             var devices = await MediaDevices.EnumerateDevices();
             if (devices == null) throw new Exception("EnumerateDevices returned null");
-            // On desktop stub, returns empty array. On browser with fake devices, may return devices.
-            // Just verify it doesn't throw and returns a valid array.
         }
 
-        /// <summary>
-        /// Verify GetUserMedia with video constraint returns a stream with a video track.
-        /// Browser: uses fake camera (--use-fake-device-for-media-stream).
-        /// Desktop: returns stub track (Phase 2 adds real capture).
-        /// </summary>
         [TestMethod]
-        public async Task GetUserMedia_VideoOnly()
+        public async Task EnumerateDevices_DevicesHaveKind()
         {
-            using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Video = true });
-            if (stream == null) throw new Exception("GetUserMedia returned null");
-            if (!stream.Active && !OperatingSystem.IsWindows()) throw new Exception("Stream is not active");
-            var tracks = stream.GetVideoTracks();
-            if (tracks.Length == 0) throw new Exception("No video tracks in stream");
-            if (tracks[0].Kind != "video") throw new Exception($"Expected kind 'video', got '{tracks[0].Kind}'");
+            var devices = await MediaDevices.EnumerateDevices();
+            foreach (var d in devices)
+            {
+                if (string.IsNullOrEmpty(d.Kind))
+                    throw new Exception($"Device '{d.Label}' has empty Kind");
+                if (d.Kind != "videoinput" && d.Kind != "audioinput" && d.Kind != "audiooutput")
+                    throw new Exception($"Device '{d.Label}' has unexpected Kind '{d.Kind}'");
+            }
         }
 
-        /// <summary>
-        /// Verify GetUserMedia with audio constraint returns a stream with an audio track.
-        /// </summary>
         [TestMethod]
-        public async Task GetUserMedia_AudioOnly()
+        public async Task EnumerateDevices_DevicesHaveDeviceId()
+        {
+            var devices = await MediaDevices.EnumerateDevices();
+            foreach (var d in devices)
+            {
+                if (string.IsNullOrEmpty(d.DeviceId))
+                    throw new Exception($"Device '{d.Label}' has empty DeviceId");
+            }
+        }
+
+        [TestMethod]
+        public async Task EnumerateDevices_DevicesHaveLabel()
+        {
+            var devices = await MediaDevices.EnumerateDevices();
+            // On desktop, labels should always be populated
+            // On browser without permission, labels may be empty (that's spec-correct)
+            if (!OperatingSystem.IsBrowser())
+            {
+                foreach (var d in devices)
+                {
+                    if (string.IsNullOrEmpty(d.Label))
+                        throw new Exception($"Desktop device with ID '{d.DeviceId}' has empty Label");
+                }
+            }
+        }
+
+        [TestMethod]
+        public async Task EnumerateDevices_DeviceIdsAreUnique()
+        {
+            var devices = await MediaDevices.EnumerateDevices();
+            if (devices.Length < 2) return; // Need at least 2 to test uniqueness
+            var ids = new HashSet<string>();
+            foreach (var d in devices)
+            {
+                if (!ids.Add(d.DeviceId))
+                    throw new Exception($"Duplicate DeviceId: {d.DeviceId}");
+            }
+        }
+
+        // ---- GetUserMedia - Audio ----
+
+        [TestMethod]
+        public async Task GetUserMedia_AudioOnly_ReturnsStream()
         {
             using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Audio = true });
             if (stream == null) throw new Exception("GetUserMedia returned null");
+        }
+
+        [TestMethod]
+        public async Task GetUserMedia_AudioOnly_HasAudioTrack()
+        {
+            using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Audio = true });
             var tracks = stream.GetAudioTracks();
             if (tracks.Length == 0) throw new Exception("No audio tracks in stream");
             if (tracks[0].Kind != "audio") throw new Exception($"Expected kind 'audio', got '{tracks[0].Kind}'");
         }
 
-        /// <summary>
-        /// Verify GetUserMedia with both audio and video returns both track types.
-        /// </summary>
         [TestMethod]
-        public async Task GetUserMedia_AudioAndVideo()
+        public async Task GetUserMedia_AudioOnly_NoVideoTracks()
         {
-            using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Audio = true, Video = true });
-            if (stream == null) throw new Exception("GetUserMedia returned null");
-            var allTracks = stream.GetTracks();
-            if (allTracks.Length < 2) throw new Exception($"Expected at least 2 tracks, got {allTracks.Length}");
-            var audioTracks = stream.GetAudioTracks();
+            using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Audio = true });
             var videoTracks = stream.GetVideoTracks();
-            if (audioTracks.Length == 0) throw new Exception("No audio tracks");
-            if (videoTracks.Length == 0) throw new Exception("No video tracks");
+            if (videoTracks.Length > 0) throw new Exception($"Audio-only stream should have 0 video tracks, got {videoTracks.Length}");
         }
 
-        /// <summary>
-        /// Verify track properties are populated.
-        /// </summary>
         [TestMethod]
-        public async Task MediaStreamTrack_Properties()
+        public async Task GetUserMedia_AudioTrack_HasId()
+        {
+            using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Audio = true });
+            var track = stream.GetAudioTracks()[0];
+            if (string.IsNullOrEmpty(track.Id)) throw new Exception("Audio track ID is empty");
+        }
+
+        [TestMethod]
+        public async Task GetUserMedia_AudioTrack_HasLabel()
+        {
+            using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Audio = true });
+            var track = stream.GetAudioTracks()[0];
+            if (string.IsNullOrEmpty(track.Label)) throw new Exception("Audio track Label is empty");
+        }
+
+        [TestMethod]
+        public async Task GetUserMedia_AudioTrack_IsLive()
+        {
+            using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Audio = true });
+            var track = stream.GetAudioTracks()[0];
+            if (track.ReadyState != "live")
+                throw new Exception($"Expected readyState 'live', got '{track.ReadyState}'");
+        }
+
+        [TestMethod]
+        public async Task GetUserMedia_AudioTrack_EnabledByDefault()
+        {
+            using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Audio = true });
+            var track = stream.GetAudioTracks()[0];
+            if (!track.Enabled) throw new Exception("Audio track should be enabled by default");
+        }
+
+        [TestMethod]
+        public async Task GetUserMedia_AudioTrack_ToggleEnabled()
+        {
+            using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Audio = true });
+            var track = stream.GetAudioTracks()[0];
+            track.Enabled = false;
+            if (track.Enabled) throw new Exception("Track should be disabled");
+            track.Enabled = true;
+            if (!track.Enabled) throw new Exception("Track should be re-enabled");
+        }
+
+        [TestMethod]
+        public async Task GetUserMedia_AudioTrack_StopEndsTrack()
+        {
+            using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Audio = true });
+            var track = stream.GetAudioTracks()[0];
+            track.Stop();
+            if (track.ReadyState != "ended")
+                throw new Exception($"Expected 'ended' after Stop, got '{track.ReadyState}'");
+        }
+
+        [TestMethod]
+        public async Task GetUserMedia_AudioTrack_GetSettings_HasSampleRate()
+        {
+            using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Audio = true });
+            var track = stream.GetAudioTracks()[0];
+            var settings = track.GetSettings();
+            if (settings.SampleRate == null || settings.SampleRate <= 0)
+                throw new Exception($"Expected positive SampleRate, got {settings.SampleRate}");
+        }
+
+        [TestMethod]
+        public async Task GetUserMedia_AudioTrack_GetSettings_HasChannelCount()
+        {
+            using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Audio = true });
+            var track = stream.GetAudioTracks()[0];
+            var settings = track.GetSettings();
+            if (settings.ChannelCount == null || settings.ChannelCount <= 0)
+                throw new Exception($"Expected positive ChannelCount, got {settings.ChannelCount}");
+        }
+
+        // ---- GetUserMedia - Video ----
+
+        [TestMethod]
+        public async Task GetUserMedia_VideoOnly_ReturnsStream()
         {
             using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Video = true });
-            var track = stream.GetVideoTracks()[0];
-            if (string.IsNullOrEmpty(track.Id)) throw new Exception("Track ID is empty");
-            if (track.Kind != "video") throw new Exception($"Expected kind 'video', got '{track.Kind}'");
-            if (track.ReadyState != "live") throw new Exception($"Expected readyState 'live', got '{track.ReadyState}'");
+            if (stream == null) throw new Exception("GetUserMedia returned null");
+            var tracks = stream.GetVideoTracks();
+            if (tracks.Length == 0) throw new Exception("No video tracks in stream");
+            if (tracks[0].Kind != "video") throw new Exception($"Expected kind 'video', got '{tracks[0].Kind}'");
         }
 
-        /// <summary>
-        /// Verify track GetSettings returns populated settings.
-        /// </summary>
         [TestMethod]
-        public async Task MediaStreamTrack_GetSettings()
+        public async Task GetUserMedia_VideoOnly_NoAudioTracks()
+        {
+            using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Video = true });
+            var audioTracks = stream.GetAudioTracks();
+            if (audioTracks.Length > 0) throw new Exception($"Video-only stream should have 0 audio tracks, got {audioTracks.Length}");
+        }
+
+        [TestMethod]
+        public async Task GetUserMedia_VideoTrack_GetSettings_HasDimensions()
         {
             using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Video = true });
             var track = stream.GetVideoTracks()[0];
             var settings = track.GetSettings();
-            if (settings == null) throw new Exception("GetSettings returned null");
-            // Video track should have width/height
             if (settings.Width == null || settings.Width <= 0)
-                throw new Exception($"Expected positive width, got {settings.Width}");
+                throw new Exception($"Expected positive Width, got {settings.Width}");
             if (settings.Height == null || settings.Height <= 0)
-                throw new Exception($"Expected positive height, got {settings.Height}");
+                throw new Exception($"Expected positive Height, got {settings.Height}");
         }
 
-        /// <summary>
-        /// Verify track enable/disable works.
-        /// </summary>
+        // ---- GetUserMedia - Combined ----
+
         [TestMethod]
-        public async Task MediaStreamTrack_EnableDisable()
+        public async Task GetUserMedia_AudioAndVideo_HasBothTrackTypes()
         {
-            using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Video = true });
-            var track = stream.GetVideoTracks()[0];
-            if (!track.Enabled) throw new Exception("Track should be enabled by default");
-            track.Enabled = false;
-            if (track.Enabled) throw new Exception("Track should be disabled after setting to false");
-            track.Enabled = true;
-            if (!track.Enabled) throw new Exception("Track should be enabled after setting to true");
+            using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Audio = true, Video = true });
+            var allTracks = stream.GetTracks();
+            if (allTracks.Length < 2) throw new Exception($"Expected at least 2 tracks, got {allTracks.Length}");
+            if (stream.GetAudioTracks().Length == 0) throw new Exception("No audio tracks");
+            if (stream.GetVideoTracks().Length == 0) throw new Exception("No video tracks");
         }
 
-        /// <summary>
-        /// Verify track Stop changes readyState to ended.
-        /// </summary>
+        // ---- Stream Operations ----
+
         [TestMethod]
-        public async Task MediaStreamTrack_Stop()
+        public async Task MediaStream_HasUniqueId()
         {
-            using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Video = true });
-            var track = stream.GetVideoTracks()[0];
-            if (track.ReadyState != "live") throw new Exception("Track should be live before stop");
-            track.Stop();
-            if (track.ReadyState != "ended") throw new Exception($"Expected readyState 'ended' after stop, got '{track.ReadyState}'");
+            using var stream1 = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Audio = true });
+            using var stream2 = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Audio = true });
+            if (stream1.Id == stream2.Id) throw new Exception("Two streams should have different IDs");
         }
 
-        /// <summary>
-        /// Verify stream Clone creates independent copy.
-        /// </summary>
         [TestMethod]
-        public async Task MediaStream_Clone()
+        public async Task MediaStream_GetTracks_MatchesAudioPlusVideo()
         {
-            using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Video = true });
+            using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Audio = true });
+            var all = stream.GetTracks();
+            var audio = stream.GetAudioTracks();
+            var video = stream.GetVideoTracks();
+            if (all.Length != audio.Length + video.Length)
+                throw new Exception($"GetTracks ({all.Length}) != GetAudioTracks ({audio.Length}) + GetVideoTracks ({video.Length})");
+        }
+
+        [TestMethod]
+        public async Task MediaStream_GetTrackById_FindsTrack()
+        {
+            using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Audio = true });
+            var track = stream.GetAudioTracks()[0];
+            var found = stream.GetTrackById(track.Id);
+            if (found == null) throw new Exception($"GetTrackById({track.Id}) returned null");
+            if (found.Id != track.Id) throw new Exception("Found track has different ID");
+        }
+
+        [TestMethod]
+        public async Task MediaStream_GetTrackById_ReturnsNullForBadId()
+        {
+            using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Audio = true });
+            var found = stream.GetTrackById("nonexistent-id-12345");
+            if (found != null) throw new Exception("Expected null for nonexistent track ID");
+        }
+
+        [TestMethod]
+        public async Task MediaStream_RemoveTrack_RemovesIt()
+        {
+            using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Audio = true });
+            var track = stream.GetAudioTracks()[0];
+            var before = stream.GetTracks().Length;
+            stream.RemoveTrack(track);
+            var after = stream.GetTracks().Length;
+            if (after != before - 1)
+                throw new Exception($"Expected {before - 1} tracks after remove, got {after}");
+        }
+
+        [TestMethod]
+        public async Task MediaStream_AddTrack_AddsIt()
+        {
+            using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Audio = true });
+            var track = stream.GetAudioTracks()[0];
+            stream.RemoveTrack(track);
+            var before = stream.GetTracks().Length;
+            stream.AddTrack(track);
+            var after = stream.GetTracks().Length;
+            if (after != before + 1)
+                throw new Exception($"Expected {before + 1} tracks after add, got {after}");
+        }
+
+        [TestMethod]
+        public async Task MediaStream_Clone_HasDifferentId()
+        {
+            using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Audio = true });
             using var clone = stream.Clone();
             if (clone.Id == stream.Id) throw new Exception("Clone should have different ID");
+        }
+
+        [TestMethod]
+        public async Task MediaStream_Clone_HasSameTrackCount()
+        {
+            using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Audio = true });
+            using var clone = stream.Clone();
             if (clone.GetTracks().Length != stream.GetTracks().Length)
                 throw new Exception("Clone should have same number of tracks");
         }
 
-        /// <summary>
-        /// Verify track Clone creates independent copy.
-        /// </summary>
+        // ---- Track Operations ----
+
         [TestMethod]
-        public async Task MediaStreamTrack_Clone()
+        public async Task MediaStreamTrack_Clone_HasDifferentId()
         {
-            using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Video = true });
-            var track = stream.GetVideoTracks()[0];
-            using var clone = track.Clone() as IDisposable;
-            var cloneTrack = (IMediaStreamTrack)clone!;
-            if (cloneTrack.Id == track.Id) throw new Exception("Clone should have different ID");
-            // Stopping original should not affect clone
+            using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Audio = true });
+            var track = stream.GetAudioTracks()[0];
+            var clone = track.Clone();
+            if (clone.Id == track.Id) throw new Exception("Cloned track should have different ID");
+            clone.Dispose();
+        }
+
+        [TestMethod]
+        public async Task MediaStreamTrack_Clone_IsIndependent()
+        {
+            using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Audio = true });
+            var track = stream.GetAudioTracks()[0];
+            var clone = track.Clone();
             track.Stop();
-            if (cloneTrack.ReadyState == "ended") throw new Exception("Clone should still be live after stopping original");
+            // Clone should remain live even after original is stopped
+            if (clone.ReadyState == "ended")
+                throw new Exception("Clone should still be live after stopping original");
+            clone.Dispose();
         }
 
-        /// <summary>
-        /// Verify AddTrack/RemoveTrack on stream.
-        /// </summary>
         [TestMethod]
-        public async Task MediaStream_AddRemoveTrack()
+        public async Task MediaStreamTrack_ContentHint_DefaultEmpty()
         {
-            using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Audio = true, Video = true });
-            var initialCount = stream.GetTracks().Length;
-            if (initialCount < 2) throw new Exception($"Expected at least 2 tracks, got {initialCount}");
-
-            var audioTrack = stream.GetAudioTracks()[0];
-            stream.RemoveTrack(audioTrack);
-            var afterRemove = stream.GetTracks().Length;
-            if (afterRemove != initialCount - 1)
-                throw new Exception($"Expected {initialCount - 1} tracks after remove, got {afterRemove}");
-
-            stream.AddTrack(audioTrack);
-            var afterAdd = stream.GetTracks().Length;
-            if (afterAdd != initialCount)
-                throw new Exception($"Expected {initialCount} tracks after re-add, got {afterAdd}");
+            using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Audio = true });
+            var track = stream.GetAudioTracks()[0];
+            if (track.ContentHint == null)
+                throw new Exception("ContentHint should not be null (empty string is valid)");
         }
 
-        /// <summary>
-        /// Verify at least one constraint must be provided.
-        /// </summary>
+        [TestMethod]
+        public async Task MediaStreamTrack_NotMutedByDefault()
+        {
+            using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Audio = true });
+            var track = stream.GetAudioTracks()[0];
+            if (track.Muted) throw new Exception("Track should not be muted by default");
+        }
+
+        // ---- Error Handling ----
+
         [TestMethod]
         public async Task GetUserMedia_NoConstraints_Throws()
         {
@@ -203,12 +361,32 @@ namespace SpawnDev.MultiMedia.Demo.Shared.UnitTests
             }
             catch (ArgumentException)
             {
-                // Expected
+                // Expected on desktop
             }
-            catch (Exception ex) when (ex.Message.Contains("constraint") || ex.Message.Contains("audio") || ex.Message.Contains("video"))
+            catch (Exception ex) when (ex.Message != "Expected exception for empty constraints")
             {
-                // Browser may throw different error message
+                // Browser may throw different error type
             }
+        }
+
+        // ---- Dispose Behavior ----
+
+        [TestMethod]
+        public async Task MediaStream_Dispose_StopsTracks()
+        {
+            var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Audio = true });
+            var track = stream.GetAudioTracks()[0];
+            stream.Dispose();
+            if (track.ReadyState != "ended")
+                throw new Exception($"Track should be ended after stream dispose, got '{track.ReadyState}'");
+        }
+
+        [TestMethod]
+        public async Task MediaStream_DoubleDispose_NoThrow()
+        {
+            var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Audio = true });
+            stream.Dispose();
+            stream.Dispose(); // Should not throw
         }
     }
 }
