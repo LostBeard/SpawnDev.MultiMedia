@@ -1,0 +1,8 @@
+<Solution>
+  <Project Path="PlaywrightMultiTest/PlaywrightMultiTest.csproj" />
+  <Project Path="SpawnDev.MultiMedia.Demo.Shared/SpawnDev.MultiMedia.Demo.Shared.csproj" />
+  <Project Path="SpawnDev.MultiMedia.Demo/SpawnDev.MultiMedia.Demo.csproj" />
+  <Project Path="SpawnDev.MultiMedia.DemoConsole/SpawnDev.MultiMedia.DemoConsole.csproj" />
+  <Project Path="SpawnDev.MultiMedia.WpfDemo/SpawnDev.MultiMedia.WpfDemo.csproj" />
+  <Project Path="SpawnDev.MultiMedia/SpawnDev.MultiMedia.csproj" />
+</Solution>

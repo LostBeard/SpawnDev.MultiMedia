@@ -1,0 +1,55 @@
+@page "/"
+
+<PageTitle>SpawnDev.MultiMedia - Media Everywhere</PageTitle>
+
+<div class="container mt-4">
+    <h1>SpawnDev.MultiMedia</h1>
+    <p class="lead">Cross-platform media capture and playback for .NET - browser and desktop from a single API.</p>
+
+    <div class="row mt-4">
+        <div class="col-md-8">
+            <h4>What is SpawnDev.MultiMedia?</h4>
+            <p>
+                SpawnDev.MultiMedia provides a unified media interface for camera, microphone,
+                speakers, and video display that works identically in Blazor WebAssembly
+                (using native browser media APIs) and on desktop .NET
+                (using platform-specific capture APIs like MediaFoundation and WASAPI).
+            </p>
+            <p>
+                Write your media capture and playback code once - it runs everywhere.
+            </p>
+
+            <h4 class="mt-4">Features</h4>
+            <ul>
+                <li><strong>True cross-platform</strong> - Browser (Blazor WASM), Windows, Linux, macOS</li>
+                <li><strong>Camera capture</strong> - Access webcam video with resolution/framerate constraints</li>
+                <li><strong>Microphone capture</strong> - Access audio input with sample rate/channel controls</li>
+                <li><strong>Device enumeration</strong> - List all available media devices</li>
+                <li><strong>Screen capture</strong> - Browser getDisplayMedia support</li>
+                <li><strong>No external media NuGet dependencies</strong> - Platform APIs via P/Invoke</li>
+            </ul>
+
+            <h4 class="mt-4">Built With</h4>
+            <p>
+                Browser interop is powered by
+                <a href="https://github.com/LostBeard/SpawnDev.BlazorJS" target="_blank">SpawnDev.BlazorJS</a>
+                with typed C# wrappers for all browser media APIs.
+                Desktop capture uses native platform APIs (MediaFoundation, WASAPI) via P/Invoke.
+            </p>
+        </div>
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Links</h5>
+                    <ul class="list-unstyled">
+                        <li><a href="https://github.com/LostBeard/SpawnDev.MultiMedia" target="_blank">GitHub</a></li>
+                        <li><a href="https://www.nuget.org/packages/SpawnDev.MultiMedia" target="_blank">NuGet</a></li>
+                        <li><a href="https://github.com/LostBeard/SpawnDev.BlazorJS" target="_blank">SpawnDev.BlazorJS</a></li>
+                    </ul>
+                    <h5 class="card-title mt-3">Test</h5>
+                    <p><a href="/tests" class="btn btn-primary btn-sm">Run Unit Tests</a></p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

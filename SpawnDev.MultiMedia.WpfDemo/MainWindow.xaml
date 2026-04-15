@@ -1,0 +1,44 @@
+<Window x:Class="SpawnDev.MultiMedia.WpfDemo.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="SpawnDev.MultiMedia - Camera Preview" Height="600" Width="800"
+        Background="#111" Foreground="#eee" WindowStartupLocation="CenterScreen">
+
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <StackPanel Grid.Row="0" Margin="0,0,0,12">
+            <TextBlock Text="SpawnDev.MultiMedia" FontSize="24" FontWeight="Bold" Foreground="#e0e0e0"/>
+            <TextBlock Text="Cross-platform camera preview and audio capture" Foreground="#888" FontSize="14"/>
+        </StackPanel>
+
+        <!-- Camera Preview Area -->
+        <Border Grid.Row="1" Background="#1a1a1a" CornerRadius="8" Margin="0,0,0,12">
+            <Grid>
+                <Image x:Name="CameraPreview" Stretch="Uniform"/>
+                <TextBlock x:Name="StatusText"
+                           Text="Camera preview will appear here.&#x0a;Click 'Start Camera' to begin capture."
+                           Foreground="#555" TextWrapping="Wrap" TextAlignment="Center"
+                           VerticalAlignment="Center" HorizontalAlignment="Center" FontSize="16"/>
+            </Grid>
+        </Border>
+
+        <!-- Controls -->
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Center">
+            <Button x:Name="StartCameraButton" Content="Start Camera" Click="StartCamera_Click"
+                    Padding="16,8" Margin="4" FontSize="14"
+                    Background="#2563eb" Foreground="White" BorderThickness="0"/>
+            <Button x:Name="StopCameraButton" Content="Stop Camera" Click="StopCamera_Click"
+                    Padding="16,8" Margin="4" FontSize="14" IsEnabled="False"
+                    Background="#333" Foreground="#888" BorderThickness="0"/>
+            <Button Content="Enumerate Devices" Click="EnumerateDevices_Click"
+                    Padding="16,8" Margin="4" FontSize="14"
+                    Background="#333" Foreground="#ccc" BorderThickness="0"/>
+        </StackPanel>
+    </Grid>
+</Window>
