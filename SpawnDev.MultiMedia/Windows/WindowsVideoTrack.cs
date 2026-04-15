@@ -72,28 +72,35 @@ namespace SpawnDev.MultiMedia.Windows
             MF.ThrowOnFailure(MF.MFCreateSourceReaderFromMediaSource(
                 track._mediaSource, null, out track._sourceReader));
 
-            // Configure output format - request RGB32 (BGRA) for easy consumption
+            // Configure output format based on consumer preference
+            var requestedFormat = constraints?.PixelFormat;
+            var requestedMfSubtype = PixelFormatToMfSubtype(requestedFormat);
+
             MF.ThrowOnFailure(MF.MFCreateMediaType(out var outputType));
             var majorTypeKey = MF.MF_MT_MAJOR_TYPE;
             var videoType = MF.MFMediaType_Video;
             outputType.SetGUID(ref majorTypeKey, ref videoType);
 
             var subtypeKey = MF.MF_MT_SUBTYPE;
-            var rgb32 = MF.MFVideoFormat_RGB32;
-            outputType.SetGUID(ref subtypeKey, ref rgb32);
+            outputType.SetGUID(ref subtypeKey, ref requestedMfSubtype);
 
             var hr = track._sourceReader.SetCurrentMediaType(
                 MF.MF_SOURCE_READER_FIRST_VIDEO_STREAM, IntPtr.Zero, outputType);
             Marshal.ReleaseComObject(outputType);
 
-            if (hr < 0)
+            if (hr >= 0)
             {
-                // RGB32 not supported by decoder chain - fall back to reading native format
+                // MF accepted our requested format
+                track._outputFormat = requestedFormat ?? VideoPixelFormat.BGRA;
+            }
+            else
+            {
+                // Requested format not supported - read whatever the source provides natively
                 track._sourceReader.GetCurrentMediaType(
                     MF.MF_SOURCE_READER_FIRST_VIDEO_STREAM, out var currentType);
                 var stKey = MF.MF_MT_SUBTYPE;
-                currentType.GetGUID(ref stKey, out var subtype);
-                track._outputFormat = MF.SubtypeToPixelFormat(subtype) ?? VideoPixelFormat.BGRA;
+                currentType.GetGUID(ref stKey, out var nativeSubtype);
+                track._outputFormat = MF.SubtypeToPixelFormat(nativeSubtype) ?? VideoPixelFormat.NV12;
                 Marshal.ReleaseComObject(currentType);
             }
 
@@ -226,6 +233,7 @@ namespace SpawnDev.MultiMedia.Windows
                 Width = Width,
                 Height = Height,
                 FrameRate = FrameRate,
+                PixelFormat = _outputFormat,
             };
         }
 
@@ -287,5 +295,19 @@ namespace SpawnDev.MultiMedia.Windows
                 OnEnded?.Invoke();
             }
         }
+
+        /// <summary>
+        /// Maps our VideoPixelFormat to an MF subtype GUID for SetCurrentMediaType.
+        /// null defaults to RGB32 (BGRA) for display compatibility.
+        /// </summary>
+        private static Guid PixelFormatToMfSubtype(VideoPixelFormat? format) => format switch
+        {
+            VideoPixelFormat.NV12 => MF.MFVideoFormat_NV12,
+            VideoPixelFormat.I420 => MF.MFVideoFormat_I420,
+            VideoPixelFormat.YUY2 => MF.MFVideoFormat_YUY2,
+            VideoPixelFormat.BGRA => MF.MFVideoFormat_RGB32,
+            VideoPixelFormat.RGBA => MF.MFVideoFormat_ARGB32,
+            _ => MF.MFVideoFormat_RGB32, // Default: BGRA for display consumers
+        };
     }
 }

@@ -86,6 +86,12 @@ namespace SpawnDev.MultiMedia
         public string? FacingMode { get; set; }
         public string? ResizeMode { get; set; }
 
+        /// <summary>
+        /// The pixel format of video frames being delivered (SpawnDev extension).
+        /// Reflects the actual format after negotiation - may differ from requested.
+        /// </summary>
+        public VideoPixelFormat? PixelFormat { get; set; }
+
         // Audio
         public int? SampleRate { get; set; }
         public int? SampleSize { get; set; }
@@ -140,6 +146,16 @@ namespace SpawnDev.MultiMedia
         [JsonPropertyName("deviceId")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public string? DeviceId { get; set; }
+
+        /// <summary>
+        /// Preferred output pixel format for video tracks (SpawnDev extension, not W3C standard).
+        /// null = BGRA (display-ready, default for WPF/rendering consumers).
+        /// NV12 = native camera format, zero conversion overhead (ideal for WebRTC encoding, ILGPU processing).
+        /// I420 = planar YUV 4:2:0 (common encoder input format).
+        /// The actual format delivered in VideoFrame.Format may differ if the hardware doesn't support the request.
+        /// </summary>
+        [JsonIgnore]
+        public VideoPixelFormat? PixelFormat { get; set; }
     }
 
     /// <summary>
