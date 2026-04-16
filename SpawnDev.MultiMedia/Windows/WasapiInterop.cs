@@ -227,4 +227,13 @@ namespace SpawnDev.MultiMedia.Windows
         [PreserveSig] int ReleaseBuffer(uint NumFramesRead);
         [PreserveSig] int GetNextPacketSize(out uint pNumFramesInNextPacket);
     }
+
+    // COM Interface: IAudioRenderClient (for audio playback)
+    [ComImport, Guid("F294ACFC-3146-4483-A7BF-ADDCA7C260E2"),
+     InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IAudioRenderClient
+    {
+        [PreserveSig] int GetBuffer(uint NumFramesRequested, out IntPtr ppData);
+        [PreserveSig] int ReleaseBuffer(uint NumFramesWritten, uint dwFlags);
+    }
 }
