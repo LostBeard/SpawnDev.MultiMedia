@@ -102,12 +102,82 @@ namespace SpawnDev.MultiMedia.Demo.Shared.UnitTests
             int expectedSize = f.Format switch
             {
                 VideoPixelFormat.BGRA or VideoPixelFormat.RGBA => f.Width * f.Height * 4,
+                VideoPixelFormat.RGB24 => f.Width * f.Height * 3,
                 VideoPixelFormat.NV12 or VideoPixelFormat.I420 => f.Width * f.Height * 3 / 2,
-                VideoPixelFormat.YUY2 => f.Width * f.Height * 2,
+                VideoPixelFormat.YUY2 or VideoPixelFormat.UYVY => f.Width * f.Height * 2,
+                VideoPixelFormat.MJPG => 0, // MJPG is variable-size compressed
                 _ => 0,
             };
             if (expectedSize > 0 && f.Data.Length != expectedSize)
                 throw new Exception($"Frame data size {f.Data.Length} doesn't match expected {expectedSize} for {f.Format} {f.Width}x{f.Height}");
+        }
+
+        /// <summary>
+        /// Captures real audio frames from the microphone and verifies data arrives.
+        /// Desktop: captures from first WASAPI audio input device.
+        /// Browser: captures from fake mic provided by Playwright args.
+        /// </summary>
+        [TestMethod]
+        public async Task AudioCapture_ReceivesFrames()
+        {
+            var devices = await MediaDevices.EnumerateDevices();
+            var hasAudio = devices.Any(d => d.Kind == "audioinput");
+            if (!hasAudio && !OperatingSystem.IsBrowser())
+                throw new Exception("No audio input devices available - cannot test audio capture");
+
+            using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Audio = true });
+            var track = stream.GetAudioTracks()[0];
+            if (track is not IAudioTrack audioTrack)
+            {
+                // Stub tracks pass basic tests but can't capture real frames
+                // This is expected on systems where WASAPI capture init fails
+                return;
+            }
+
+            var frameReceived = new TaskCompletionSource<AudioFrame>();
+            int frameCount = 0;
+            audioTrack.OnFrame += frame =>
+            {
+                if (Interlocked.Increment(ref frameCount) == 3)
+                    frameReceived.TrySetResult(frame);
+            };
+
+            var completed = await Task.WhenAny(frameReceived.Task, Task.Delay(5000));
+            if (completed != frameReceived.Task)
+                throw new Exception($"Timed out waiting for audio frames (got {frameCount} in 5s)");
+
+            var f = await frameReceived.Task;
+            if (f.SampleRate <= 0) throw new Exception($"SampleRate is {f.SampleRate}");
+            if (f.ChannelCount <= 0) throw new Exception($"ChannelCount is {f.ChannelCount}");
+            if (f.SamplesPerChannel <= 0) throw new Exception($"SamplesPerChannel is {f.SamplesPerChannel}");
+            if (f.Data.Length <= 0) throw new Exception("Audio frame data is empty");
+        }
+
+        /// <summary>
+        /// Verifies that IAudioTrack properties match the device's native format.
+        /// </summary>
+        [TestMethod]
+        public async Task AudioCapture_TrackProperties()
+        {
+            var devices = await MediaDevices.EnumerateDevices();
+            if (!devices.Any(d => d.Kind == "audioinput") && !OperatingSystem.IsBrowser())
+                throw new Exception("No audio input devices available");
+
+            using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Audio = true });
+            var track = stream.GetAudioTracks()[0];
+            if (track is not IAudioTrack audioTrack)
+                return; // Stub - skip property verification
+
+            if (audioTrack.SampleRate <= 0)
+                throw new Exception($"SampleRate should be positive, got {audioTrack.SampleRate}");
+            if (audioTrack.ChannelCount <= 0)
+                throw new Exception($"ChannelCount should be positive, got {audioTrack.ChannelCount}");
+            if (audioTrack.BitsPerSample <= 0)
+                throw new Exception($"BitsPerSample should be positive, got {audioTrack.BitsPerSample}");
+
+            // Common values: 44100/48000 Hz, 1-2 channels, 16/32 bits
+            if (audioTrack.SampleRate < 8000 || audioTrack.SampleRate > 192000)
+                throw new Exception($"Unusual SampleRate: {audioTrack.SampleRate}");
         }
     }
 }

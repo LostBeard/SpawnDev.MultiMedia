@@ -22,7 +22,6 @@ namespace SpawnDev.MultiMedia.Windows
         private object? _dsGrabberComObject; // SampleGrabber - one RCW, used as ISampleGrabber and IBaseFilter
         private object? _dsSourceFilter;
         private object? _dsNullRenderer;
-        private SampleGrabberCallback? _dsCallback;
 
         // Shared state
         private volatile bool _capturing;
@@ -276,44 +275,6 @@ namespace SpawnDev.MultiMedia.Windows
         }
 
         /// <summary>
-        /// ISampleGrabberCB implementation that receives raw frame data from DirectShow
-        /// and fires OnFrame events on the WindowsVideoTrack.
-        /// </summary>
-        [System.Runtime.InteropServices.ComVisible(true)]
-        private sealed class SampleGrabberCallback : ISampleGrabberCB
-        {
-            private readonly WindowsVideoTrack _track;
-
-            public SampleGrabberCallback(WindowsVideoTrack track)
-            {
-                _track = track;
-            }
-
-            public int SampleCB(double sampleTime, IntPtr pSample)
-            {
-                return 0; // Not used - we use BufferCB
-            }
-
-            public int BufferCB(double sampleTime, IntPtr pBuffer, int bufferLen)
-            {
-                if (!_track._capturing || !_track._enabled || _track.OnFrame == null || bufferLen <= 0)
-                    return 0;
-
-                var data = new byte[bufferLen];
-                Marshal.Copy(pBuffer, data, 0, bufferLen);
-
-                long timestamp = (long)(sampleTime * 10_000_000);
-
-                var frame = new VideoFrame(
-                    _track.Width, _track.Height, _track._outputFormat,
-                    new ReadOnlyMemory<byte>(data), timestamp);
-
-                _track.OnFrame.Invoke(frame);
-                return 0;
-            }
-        }
-
-        /// <summary>
         /// Polling loop for DirectShow capture. Reads buffered samples from the SampleGrabber.
         /// Used instead of ISampleGrabberCB callback which has COM marshaling issues in .NET.
         /// </summary>
@@ -560,8 +521,6 @@ namespace SpawnDev.MultiMedia.Windows
             {
                 try { sg.SetCallback(null, 1); } catch { }
             }
-            _dsCallback = null;
-
             if (_dsNullRenderer != null) { try { Marshal.ReleaseComObject(_dsNullRenderer); } catch { } _dsNullRenderer = null; }
             if (_dsGrabberComObject != null) { try { Marshal.ReleaseComObject(_dsGrabberComObject); } catch { } _dsGrabberComObject = null; }
             if (_dsSourceFilter != null) { try { Marshal.ReleaseComObject(_dsSourceFilter); } catch { } _dsSourceFilter = null; }

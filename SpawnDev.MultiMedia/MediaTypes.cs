@@ -9,9 +9,12 @@ namespace SpawnDev.MultiMedia
     {
         RGBA,
         BGRA,
+        RGB24,
         NV12,
         I420,
         YUY2,
+        UYVY,
+        MJPG,
     }
 
     /// <summary>

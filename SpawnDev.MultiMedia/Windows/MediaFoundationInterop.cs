@@ -128,19 +128,37 @@ namespace SpawnDev.MultiMedia.Windows
             denominator = (int)(packed & 0xFFFFFFFF);
         }
 
-        // DirectShow MEDIASUBTYPE_RGB32 (different GUID from MF's MFVideoFormat_RGB32)
+        // Additional MF/FOURCC format GUIDs
+        public static readonly Guid MFVideoFormat_UYVY =
+            new("59565955-0000-0010-8000-00AA00389B71");
+
+        public static readonly Guid MFVideoFormat_RGB24 =
+            new("00000014-0000-0010-8000-00AA00389B71");
+
+        // DirectShow MEDIASUBTYPE GUIDs (different GUID scheme from MF FOURCC)
         public static readonly Guid MEDIASUBTYPE_RGB32_DS =
             new("E436EB7E-524F-11CE-9F53-0020AF0BA770");
 
+        public static readonly Guid MEDIASUBTYPE_RGB24_DS =
+            new("E436EB7D-524F-11CE-9F53-0020AF0BA770");
+
         // Helper: map MF or DirectShow subtype GUID to our VideoPixelFormat
+        // Handles FOURCC-based GUIDs (MF + DirectShow shared) and DS-specific GUIDs
         public static VideoPixelFormat? SubtypeToPixelFormat(Guid subtype)
         {
+            // FOURCC-based (shared between MF and DirectShow)
             if (subtype == MFVideoFormat_NV12) return VideoPixelFormat.NV12;
             if (subtype == MFVideoFormat_YUY2) return VideoPixelFormat.YUY2;
             if (subtype == MFVideoFormat_I420) return VideoPixelFormat.I420;
+            if (subtype == MFVideoFormat_MJPG) return VideoPixelFormat.MJPG;
+            if (subtype == MFVideoFormat_UYVY) return VideoPixelFormat.UYVY;
+            // MF D3DFMT-based
             if (subtype == MFVideoFormat_RGB32) return VideoPixelFormat.BGRA;
             if (subtype == MFVideoFormat_ARGB32) return VideoPixelFormat.BGRA;
+            if (subtype == MFVideoFormat_RGB24) return VideoPixelFormat.RGB24;
+            // DirectShow-specific subtypes (non-FOURCC)
             if (subtype == MEDIASUBTYPE_RGB32_DS) return VideoPixelFormat.BGRA;
+            if (subtype == MEDIASUBTYPE_RGB24_DS) return VideoPixelFormat.RGB24;
             return null;
         }
     }
