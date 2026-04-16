@@ -74,11 +74,17 @@ namespace SpawnDev.MultiMedia.Demo.Shared.UnitTests
         {
             var devices = await MediaDevices.EnumerateDevices();
             if (devices.Length < 2) return; // Need at least 2 to test uniqueness
-            var ids = new HashSet<string>();
+            // Device IDs are unique within the same kind (browser "default" can appear for both audio and video)
+            var idsByKind = new Dictionary<string, HashSet<string>>();
             foreach (var d in devices)
             {
+                if (!idsByKind.TryGetValue(d.Kind, out var ids))
+                {
+                    ids = new HashSet<string>();
+                    idsByKind[d.Kind] = ids;
+                }
                 if (!ids.Add(d.DeviceId))
-                    throw new Exception($"Duplicate DeviceId: {d.DeviceId}");
+                    throw new Exception($"Duplicate DeviceId within {d.Kind}: {d.DeviceId}");
             }
         }
 
