@@ -90,7 +90,8 @@ namespace SpawnDev.MultiMedia
                 case (VideoPixelFormat.NV12, VideoPixelFormat.I420):
                     _nv12ToI420Kernel ??= _accelerator.LoadAutoGroupedStreamKernel<Index1D,
                         ArrayView<byte>, ArrayView<byte>, int, int>(NV12toI420Kernel);
-                    _nv12ToI420Kernel(pixelCount, src, dst, width, height);
+                    // Dispatch enough for Y plane + UV plane (total = ySize + uvSize = w*h*3/2)
+                    _nv12ToI420Kernel(width * height * 3 / 2, src, dst, width, height);
                     break;
 
                 case (VideoPixelFormat.NV12, VideoPixelFormat.BGRA):
@@ -146,21 +147,22 @@ namespace SpawnDev.MultiMedia
         static void NV12toI420Kernel(Index1D index, ArrayView<byte> src, ArrayView<byte> dst, int width, int height)
         {
             int ySize = width * height;
-            int uvWidth = width / 2;
-            int uvSize = uvWidth * (height / 2);
+            int uvSize = (width / 2) * (height / 2);
 
             if (index < ySize)
             {
-                // Copy Y as-is
+                // Copy Y plane as-is
                 dst[index] = src[index];
             }
-
-            // Each UV pair: deinterleave
-            int uvIndex = index - ySize;
-            if (uvIndex >= 0 && uvIndex < uvSize)
+            else
             {
-                dst[ySize + uvIndex] = src[ySize + uvIndex * 2];           // U
-                dst[ySize + uvSize + uvIndex] = src[ySize + uvIndex * 2 + 1]; // V
+                // Deinterleave UV: NV12 has [U0,V0,U1,V1,...], I420 has separate U and V planes
+                int uvIndex = index - ySize;
+                if (uvIndex < uvSize)
+                {
+                    dst[ySize + uvIndex] = src[ySize + uvIndex * 2];           // U
+                    dst[ySize + uvSize + uvIndex] = src[ySize + uvIndex * 2 + 1]; // V
+                }
             }
         }
 

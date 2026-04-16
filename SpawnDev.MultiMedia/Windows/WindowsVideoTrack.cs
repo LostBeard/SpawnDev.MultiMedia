@@ -532,6 +532,10 @@ namespace SpawnDev.MultiMedia.Windows
             if (_dsCaptureGraphBuilder != null) { try { Marshal.ReleaseComObject(_dsCaptureGraphBuilder); } catch { } _dsCaptureGraphBuilder = null; }
             if (_dsGraphBuilder != null) { try { Marshal.ReleaseComObject(_dsGraphBuilder); } catch { } _dsGraphBuilder = null; }
 
+            // Brief delay to let COM fully release device handles
+            // Prevents "device busy" when the same device is reopened immediately in tests
+            Thread.Sleep(50);
+
             if (_readyState == "live")
             {
                 _readyState = "ended";
