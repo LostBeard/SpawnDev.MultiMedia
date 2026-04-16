@@ -1,0 +1,127 @@
+@page "/camera"
+@using SpawnDev.MultiMedia.Browser
+@using SpawnDev.BlazorJS
+@using SpawnDev.BlazorJS.JSObjects
+
+<PageTitle>Camera Preview</PageTitle>
+
+<h3>Camera Preview</h3>
+
+<div class="mb-3">
+    @if (!_capturing)
+    {
+        <button class="btn btn-primary me-2" @onclick="StartCamera">Start Camera</button>
+        <button class="btn btn-secondary me-2" @onclick="ListDevices">List Devices</button>
+    }
+    else
+    {
+        <button class="btn btn-danger me-2" @onclick="StopCamera">Stop Camera</button>
+        <span class="text-muted">@_statusText</span>
+    }
+</div>
+
+@if (_devices != null && _devices.Length > 0)
+{
+    <div class="mb-3">
+        <strong>Devices:</strong>
+        <ul class="list-unstyled ms-2">
+            @foreach (var d in _devices)
+            {
+                <li><span class="badge bg-secondary me-1">@d.Kind</span> @d.Label</li>
+            }
+        </ul>
+    </div>
+}
+
+<div style="background:#111;border-radius:8px;overflow:hidden;max-width:960px;">
+    <video @ref="_videoRef" autoplay playsinline muted
+           style="width:100%;display:block;"></video>
+</div>
+
+@if (!string.IsNullOrEmpty(_errorText))
+{
+    <div class="alert alert-danger mt-3">@_errorText</div>
+}
+
+@code {
+    private ElementReference _videoRef;
+    private SpawnDev.MultiMedia.IMediaStream? _stream;
+    private SpawnDev.MultiMedia.MediaDeviceInfo[]? _devices;
+    private bool _capturing;
+    private string _statusText = "";
+    private string _errorText = "";
+
+    private async Task StartCamera()
+    {
+        try
+        {
+            _errorText = "";
+            _stream = await SpawnDev.MultiMedia.MediaDevices.GetUserMedia(
+                new SpawnDev.MultiMedia.MediaStreamConstraints
+                {
+                    Video = true,
+                    Audio = false,
+                });
+
+            // Attach the native MediaStream to the video element via BlazorJS
+            if (_stream is BrowserMediaStream browserStream)
+            {
+                var JS = BlazorJSRuntime.JS;
+                var jsRef = JS.ToJSRef(_videoRef);
+                using var videoEl = new JSObject(jsRef);
+                videoEl.JSRef!.Set("srcObject", browserStream.NativeStream);
+            }
+
+            var tracks = _stream.GetVideoTracks();
+            if (tracks.Length > 0)
+            {
+                var s = tracks[0].GetSettings();
+                _statusText = $"{tracks[0].Label} - {s.Width}x{s.Height}";
+            }
+            _capturing = true;
+        }
+        catch (Exception ex)
+        {
+            _errorText = ex.Message;
+        }
+    }
+
+    private void StopCamera()
+    {
+        if (_stream != null)
+        {
+            // Clear video element srcObject
+            try
+            {
+                var JS = BlazorJSRuntime.JS;
+                var jsRef = JS.ToJSRef(_videoRef);
+                using var videoEl = new JSObject(jsRef);
+                videoEl.JSRef!.Set("srcObject", (object?)null);
+            }
+            catch { }
+
+            _stream.Dispose();
+            _stream = null;
+        }
+        _capturing = false;
+        _statusText = "";
+    }
+
+    private async Task ListDevices()
+    {
+        try
+        {
+            _errorText = "";
+            _devices = await SpawnDev.MultiMedia.MediaDevices.EnumerateDevices();
+        }
+        catch (Exception ex)
+        {
+            _errorText = ex.Message;
+        }
+    }
+
+    public void Dispose()
+    {
+        StopCamera();
+    }
+}
