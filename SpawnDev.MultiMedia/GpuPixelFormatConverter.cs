@@ -20,6 +20,8 @@ namespace SpawnDev.MultiMedia
         private Action<Index1D, ArrayView<byte>, ArrayView<byte>, int, int>? _bgraToI420Kernel;
         private Action<Index1D, ArrayView<byte>, ArrayView<byte>, int, int>? _yuy2ToI420Kernel;
         private Action<Index1D, ArrayView<byte>, ArrayView<byte>, int, int>? _yuy2ToBGRAKernel;
+        private Action<Index1D, ArrayView<byte>, ArrayView<byte>, int, int>? _uyvyToI420Kernel;
+        private Action<Index1D, ArrayView<byte>, ArrayView<byte>, int, int>? _rgb24ToBGRAKernel;
 
         /// <summary>
         /// Create a converter with an existing ILGPU Accelerator.
@@ -119,6 +121,18 @@ namespace SpawnDev.MultiMedia
                     _yuy2ToBGRAKernel ??= _accelerator.LoadAutoGroupedStreamKernel<Index1D,
                         ArrayView<byte>, ArrayView<byte>, int, int>(YUY2toBGRAKernel);
                     _yuy2ToBGRAKernel(pixelCount / 2, src, dst, width, height);
+                    break;
+
+                case (VideoPixelFormat.UYVY, VideoPixelFormat.I420):
+                    _uyvyToI420Kernel ??= _accelerator.LoadAutoGroupedStreamKernel<Index1D,
+                        ArrayView<byte>, ArrayView<byte>, int, int>(UYVYtoI420Kernel);
+                    _uyvyToI420Kernel(pixelCount / 2, src, dst, width, height);
+                    break;
+
+                case (VideoPixelFormat.RGB24, VideoPixelFormat.BGRA):
+                    _rgb24ToBGRAKernel ??= _accelerator.LoadAutoGroupedStreamKernel<Index1D,
+                        ArrayView<byte>, ArrayView<byte>, int, int>(RGB24toBGRAKernel);
+                    _rgb24ToBGRAKernel(pixelCount, src, dst, width, height);
                     break;
 
                 default:
@@ -269,6 +283,41 @@ namespace SpawnDev.MultiMedia
             dst[px1 + 1] = (byte)Clamp(y1 - (int)(0.344f * u) - (int)(0.714f * v));
             dst[px1 + 2] = (byte)Clamp(y1 + (int)(1.402f * v));
             dst[px1 + 3] = 255;
+        }
+
+        static void UYVYtoI420Kernel(Index1D index, ArrayView<byte> src, ArrayView<byte> dst, int width, int height)
+        {
+            int macroPixelsPerRow = width / 2;
+            int macroY = index / macroPixelsPerRow;
+            int macroX = index % macroPixelsPerRow;
+            if (macroY >= height) return;
+
+            int srcIdx = (macroY * macroPixelsPerRow + macroX) * 4;
+            int ySize = width * height;
+            int uvWidth = width / 2;
+            int uvSize = uvWidth * (height / 2);
+
+            int x = macroX * 2;
+            dst[macroY * width + x] = src[srcIdx + 1];     // Y0
+            dst[macroY * width + x + 1] = src[srcIdx + 3]; // Y1
+
+            if ((macroY & 1) == 0)
+            {
+                int uvIdx = (macroY / 2) * uvWidth + macroX;
+                dst[ySize + uvIdx] = src[srcIdx];           // U
+                dst[ySize + uvSize + uvIdx] = src[srcIdx + 2]; // V
+            }
+        }
+
+        static void RGB24toBGRAKernel(Index1D index, ArrayView<byte> src, ArrayView<byte> dst, int width, int height)
+        {
+            if (index >= width * height) return;
+            int s = index * 3;
+            int d = index * 4;
+            dst[d] = src[s + 2];     // B
+            dst[d + 1] = src[s + 1]; // G
+            dst[d + 2] = src[s];     // R
+            dst[d + 3] = 255;        // A
         }
 
         static int Clamp(int val) => val < 0 ? 0 : val > 255 ? 255 : val;

@@ -62,21 +62,16 @@ namespace SpawnDev.MultiMedia.Browser
 
         private static SpawnDev.BlazorJS.JSObjects.MediaStreamConstraints ToBlazorJSConstraints(MediaStreamConstraints constraints)
         {
-            // BlazorJS MediaStreamConstraints uses Union<bool, MediaTrackConstraints> for Audio/Video
-            // Our simplified version uses object? - pass through as-is since it's JSON-compatible
             var jsc = new SpawnDev.BlazorJS.JSObjects.MediaStreamConstraints();
-            if (constraints.Audio is bool audioBool)
-                jsc.Audio = audioBool;
-            else if (constraints.Audio is MediaTrackConstraints audioConstraints)
-                jsc.Audio = ToBlazorJSTrackConstraints(audioConstraints);
-            else if (constraints.Audio != null)
+
+            if (constraints.Audio?.Constraints != null)
+                jsc.Audio = ToBlazorJSTrackConstraints(constraints.Audio.Constraints);
+            else if (constraints.Audio?.IsRequested == true)
                 jsc.Audio = true;
 
-            if (constraints.Video is bool videoBool)
-                jsc.Video = videoBool;
-            else if (constraints.Video is MediaTrackConstraints videoConstraints)
-                jsc.Video = ToBlazorJSTrackConstraints(videoConstraints);
-            else if (constraints.Video != null)
+            if (constraints.Video?.Constraints != null)
+                jsc.Video = ToBlazorJSTrackConstraints(constraints.Video.Constraints);
+            else if (constraints.Video?.IsRequested == true)
                 jsc.Video = true;
 
             return jsc;

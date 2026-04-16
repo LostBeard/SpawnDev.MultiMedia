@@ -181,5 +181,57 @@ namespace SpawnDev.MultiMedia.Demo.Shared.UnitTests
                 throw new Exception($"Data size should be {w * h * 4}, got {converted.Data.Length}");
             await Task.CompletedTask;
         }
+
+        // ---- Audio Format Conversion ----
+
+        [TestMethod]
+        public async Task AudioConvert_Float32ToPcm16_Silence()
+        {
+            // Silence in float32 = all zeros -> silence in PCM16 = all zeros
+            var float32 = new byte[16]; // 4 samples of silence
+            var pcm16 = AudioFormatConverter.Float32ToPcm16(float32);
+            if (pcm16.Length != 8) throw new Exception($"Expected 8 bytes, got {pcm16.Length}");
+            for (int i = 0; i < pcm16.Length; i++)
+                if (pcm16[i] != 0) throw new Exception($"Expected silence, byte {i} = {pcm16[i]}");
+            await Task.CompletedTask;
+        }
+
+        [TestMethod]
+        public async Task AudioConvert_Float32ToPcm16_FullScale()
+        {
+            // 1.0f in float32 -> 32767 in int16 (0xFF7F in LE)
+            var float32 = new byte[4];
+            BitConverter.TryWriteBytes(float32, 1.0f);
+            var pcm16 = AudioFormatConverter.Float32ToPcm16(float32);
+            short sample = BitConverter.ToInt16(pcm16);
+            if (sample != 32767) throw new Exception($"Expected 32767, got {sample}");
+            await Task.CompletedTask;
+        }
+
+        [TestMethod]
+        public async Task AudioConvert_Float32ToPcm16_NegativeFullScale()
+        {
+            // -1.0f -> -32767
+            var float32 = new byte[4];
+            BitConverter.TryWriteBytes(float32, -1.0f);
+            var pcm16 = AudioFormatConverter.Float32ToPcm16(float32);
+            short sample = BitConverter.ToInt16(pcm16);
+            if (sample != -32767) throw new Exception($"Expected -32767, got {sample}");
+            await Task.CompletedTask;
+        }
+
+        [TestMethod]
+        public async Task AudioConvert_Pcm16ToFloat32_Roundtrip()
+        {
+            // PCM16 -> Float32 -> PCM16 should preserve values (within rounding)
+            var pcm16 = new byte[] { 0x00, 0x40 }; // 16384 in LE
+            var float32 = AudioFormatConverter.Pcm16ToFloat32(pcm16);
+            var back = AudioFormatConverter.Float32ToPcm16(float32);
+            short original = BitConverter.ToInt16(pcm16);
+            short roundtrip = BitConverter.ToInt16(back);
+            if (Math.Abs(original - roundtrip) > 1)
+                throw new Exception($"Roundtrip mismatch: {original} -> {roundtrip}");
+            await Task.CompletedTask;
+        }
     }
 }

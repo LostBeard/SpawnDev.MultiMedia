@@ -395,22 +395,27 @@ namespace SpawnDev.MultiMedia.Windows
                                 try
                                 {
                                     hr = buffer.Lock(out var dataPtr, out _, out var dataLength);
-                                    if (hr >= 0 && dataLength > 0)
+                                    if (hr >= 0)
                                     {
-                                        var data = new byte[dataLength];
-                                        Marshal.Copy(dataPtr, data, 0, dataLength);
-                                        buffer.Unlock();
+                                        try
+                                        {
+                                            if (dataLength > 0)
+                                            {
+                                                var data = new byte[dataLength];
+                                                Marshal.Copy(dataPtr, data, 0, dataLength);
 
-                                        var frame = new VideoFrame(
-                                            Width, Height, _outputFormat,
-                                            new ReadOnlyMemory<byte>(data),
-                                            timestamp);
+                                                var frame = new VideoFrame(
+                                                    Width, Height, _outputFormat,
+                                                    new ReadOnlyMemory<byte>(data),
+                                                    timestamp);
 
-                                        OnFrame.Invoke(frame);
-                                    }
-                                    else
-                                    {
-                                        buffer.Unlock();
+                                                OnFrame.Invoke(frame);
+                                            }
+                                        }
+                                        finally
+                                        {
+                                            buffer.Unlock();
+                                        }
                                     }
                                 }
                                 finally

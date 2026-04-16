@@ -28,12 +28,11 @@ namespace SpawnDev.MultiMedia.Windows
         {
             var tracks = new List<IMediaStreamTrack>();
 
-            if (constraints.Video != null)
+            if (constraints.Video?.IsRequested == true)
             {
                 EnsureMFInitialized();
-                string? requestedDeviceId = null;
-                if (constraints.Video is MediaTrackConstraints vc)
-                    requestedDeviceId = vc.DeviceId;
+                var videoConstraints = constraints.Video.Constraints;
+                string? requestedDeviceId = videoConstraints?.DeviceId;
 
                 IMediaStreamTrack? videoTrack = null;
 
@@ -46,7 +45,7 @@ namespace SpawnDev.MultiMedia.Windows
                         Marshal.ReleaseComObject(activate);
                         continue;
                     }
-                    videoTrack = WindowsVideoTrack.CreateFromActivate(activate, label, constraints.Video as MediaTrackConstraints);
+                    videoTrack = WindowsVideoTrack.CreateFromActivate(activate, label, videoConstraints);
                 }
 
                 // If MF had no match, try DirectShow (virtual cameras like OBS)
@@ -65,7 +64,7 @@ namespace SpawnDev.MultiMedia.Windows
                         {
                             try
                             {
-                                videoTrack = WindowsVideoTrack.CreateFromDirectShowMoniker(moniker, label, constraints.Video as MediaTrackConstraints);
+                                videoTrack = WindowsVideoTrack.CreateFromDirectShowMoniker(moniker, label, videoConstraints);
                             }
                             catch (Exception ex)
                             {
@@ -82,14 +81,13 @@ namespace SpawnDev.MultiMedia.Windows
                     tracks.Add(new WindowsMediaStreamTrack(Guid.NewGuid().ToString(), "video", "No Camera Found"));
             }
 
-            if (constraints.Audio != null)
+            if (constraints.Audio?.IsRequested == true)
             {
+                var audioConstraints = constraints.Audio.Constraints;
                 var audioDevices = EnumerateAudioEndpoints(EDataFlow.eCapture);
                 if (audioDevices.Length > 0)
                 {
-                    string? requestedDeviceId = null;
-                    if (constraints.Audio is MediaTrackConstraints ac)
-                        requestedDeviceId = ac.DeviceId;
+                    string? requestedDeviceId = audioConstraints?.DeviceId;
 
                     IMMDevice? selectedDevice = null;
                     string selectedLabel = "Audio Input";

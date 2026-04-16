@@ -44,7 +44,7 @@ namespace SpawnDev.MultiMedia.Windows
 
         public MediaTrackSettings GetSettings()
         {
-            // TODO: Return actual device settings when capture is implemented
+            // Stub track - returns default settings (real capture uses WindowsVideoTrack/WindowsAudioTrack)
             var settings = new MediaTrackSettings { DeviceId = Id };
             if (Kind == "video")
             {
@@ -65,7 +65,7 @@ namespace SpawnDev.MultiMedia.Windows
 
         public Task ApplyConstraints(MediaTrackConstraints constraints)
         {
-            // TODO: Apply constraints to the active capture session
+            // Stub - constraints not applicable
             return Task.CompletedTask;
         }
 
@@ -73,7 +73,7 @@ namespace SpawnDev.MultiMedia.Windows
         {
             if (_readyState == "ended") return;
             _readyState = "ended";
-            // TODO: Stop MediaFoundation/WASAPI capture
+            // Stub track - no real capture to stop
             OnEnded?.Invoke();
         }
 
@@ -90,7 +90,7 @@ namespace SpawnDev.MultiMedia.Windows
             if (_disposed) return;
             _disposed = true;
             Stop();
-            // TODO: Release MediaFoundation/WASAPI resources
+            // Stub track - no resources to release
         }
     }
 }

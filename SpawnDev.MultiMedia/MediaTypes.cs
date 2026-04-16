@@ -20,7 +20,7 @@ namespace SpawnDev.MultiMedia
     /// <summary>
     /// A single video frame with raw pixel data.
     /// </summary>
-    public class VideoFrame : IDisposable
+    public class VideoFrame
     {
         public int Width { get; }
         public int Height { get; }
@@ -36,8 +36,6 @@ namespace SpawnDev.MultiMedia
             Data = data;
             Timestamp = timestamp;
         }
-
-        public void Dispose() { }
     }
 
     /// <summary>
@@ -162,6 +160,34 @@ namespace SpawnDev.MultiMedia
     }
 
     /// <summary>
+    /// Represents a media constraint: either a boolean (true = use defaults) or detailed MediaTrackConstraints.
+    /// Null means the media type is not requested.
+    /// </summary>
+    public class MediaConstraint
+    {
+        /// <summary>
+        /// Whether this media type is requested (true) or has detailed constraints.
+        /// </summary>
+        public bool? BoolValue { get; }
+
+        /// <summary>
+        /// Detailed constraints, or null if using boolean mode.
+        /// </summary>
+        public MediaTrackConstraints? Constraints { get; }
+
+        /// <summary>
+        /// Whether any media of this type is requested.
+        /// </summary>
+        public bool IsRequested => BoolValue == true || Constraints != null;
+
+        private MediaConstraint(bool value) { BoolValue = value; }
+        private MediaConstraint(MediaTrackConstraints constraints) { Constraints = constraints; }
+
+        public static implicit operator MediaConstraint(bool value) => new(value);
+        public static implicit operator MediaConstraint(MediaTrackConstraints constraints) => new(constraints);
+    }
+
+    /// <summary>
     /// Constraints for GetUserMedia / GetDisplayMedia.
     /// </summary>
     public class MediaStreamConstraints
@@ -170,16 +196,12 @@ namespace SpawnDev.MultiMedia
         /// Audio constraint. Set to true for default audio, or a MediaTrackConstraints for specific settings.
         /// Null means no audio requested.
         /// </summary>
-        [JsonPropertyName("audio")]
-        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-        public object? Audio { get; set; }
+        public MediaConstraint? Audio { get; set; }
 
         /// <summary>
         /// Video constraint. Set to true for default video, or a MediaTrackConstraints for specific settings.
         /// Null means no video requested.
         /// </summary>
-        [JsonPropertyName("video")]
-        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-        public object? Video { get; set; }
+        public MediaConstraint? Video { get; set; }
     }
 }
