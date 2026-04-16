@@ -134,6 +134,14 @@ namespace SpawnDev.MultiMedia.Windows
             return Task.FromResult(stream);
         }
 
+        public static Task<IMediaStream> GetDisplayMedia(MediaStreamConstraints? constraints)
+        {
+            var videoConstraints = constraints?.Video?.Constraints;
+            var track = WindowsDisplayTrack.Create(videoConstraints);
+            IMediaStream stream = new WindowsMediaStream(new IMediaStreamTrack[] { track });
+            return Task.FromResult(stream);
+        }
+
         public static Task<MediaDeviceInfo[]> EnumerateDevices()
         {
             EnsureMFInitialized();

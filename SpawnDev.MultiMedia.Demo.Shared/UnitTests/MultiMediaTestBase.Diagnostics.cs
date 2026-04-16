@@ -112,6 +112,106 @@ namespace SpawnDev.MultiMedia.Demo.Shared.UnitTests
                 throw new Exception($"Frame data size {f.Data.Length} doesn't match expected {expectedSize} for {f.Format} {f.Width}x{f.Height}");
         }
 
+        // ---- Screen Capture (GetDisplayMedia) ----
+
+        /// <summary>
+        /// Captures a screen frame via GetDisplayMedia and verifies non-empty BGRA data.
+        /// Desktop-only: uses DXGI Desktop Duplication.
+        /// </summary>
+        [TestMethod]
+        public async Task ScreenCapture_ReceivesFrames()
+        {
+            if (OperatingSystem.IsBrowser()) return; // Playwright can't approve screen share prompts
+
+            IMediaStream stream;
+            try
+            {
+                stream = await MediaDevices.GetDisplayMedia(new MediaStreamConstraints { Video = true });
+            }
+            catch (Exception ex) when (ex.InnerException is ArgumentException || ex is ArgumentException)
+            {
+                // DXGI Desktop Duplication requires a console session with an active desktop.
+                // Fails in headless, RDP, or service contexts. Skip gracefully.
+                Console.WriteLine($"ScreenCapture skipped: {ex.Message}");
+                return;
+            }
+            using var _ = stream;
+            var tracks = stream.GetVideoTracks();
+            if (tracks.Length == 0)
+                throw new Exception("GetDisplayMedia returned no video tracks");
+
+            var track = tracks[0];
+            if (track is not IVideoTrack videoTrack)
+                throw new Exception("Display track doesn't implement IVideoTrack");
+
+            var settings = track.GetSettings();
+            if (settings.Width == null || settings.Width <= 0)
+                throw new Exception($"Display width is {settings.Width}");
+            if (settings.Height == null || settings.Height <= 0)
+                throw new Exception($"Display height is {settings.Height}");
+
+            var frameReceived = new TaskCompletionSource<VideoFrame>();
+            int frameCount = 0;
+            videoTrack.OnFrame += frame =>
+            {
+                if (Interlocked.Increment(ref frameCount) == 2)
+                    frameReceived.TrySetResult(frame);
+            };
+
+            var completed = await Task.WhenAny(frameReceived.Task, Task.Delay(5000));
+            if (completed != frameReceived.Task)
+                throw new Exception($"Timed out waiting for screen frames (got {frameCount} in 5s)");
+
+            var f = await frameReceived.Task;
+            if (f.Format != VideoPixelFormat.BGRA)
+                throw new Exception($"Expected BGRA, got {f.Format}");
+            if (f.Width <= 0 || f.Height <= 0)
+                throw new Exception($"Invalid dimensions: {f.Width}x{f.Height}");
+            if (f.Data.Length != f.Width * f.Height * 4)
+                throw new Exception($"Data size {f.Data.Length} doesn't match {f.Width}x{f.Height}x4 = {f.Width * f.Height * 4}");
+
+            // Verify non-zero data (real screen content)
+            var span = f.Data.Span;
+            int nonZero = 0;
+            for (int i = 0; i < Math.Min(span.Length, 10000); i++)
+                if (span[i] != 0) nonZero++;
+            if (nonZero == 0)
+                throw new Exception("Screen frame data is all zeros");
+
+            Console.WriteLine($"Screen capture: {f.Width}x{f.Height} {f.Format}, {f.Data.Length} bytes, {nonZero}/10000 non-zero sample");
+        }
+
+        /// <summary>
+        /// Verifies screen capture track lifecycle (create, capture, stop, dispose).
+        /// </summary>
+        [TestMethod]
+        public async Task ScreenCapture_Lifecycle()
+        {
+            if (OperatingSystem.IsBrowser()) return;
+
+            IMediaStream stream;
+            try
+            {
+                stream = await MediaDevices.GetDisplayMedia(new MediaStreamConstraints { Video = true });
+            }
+            catch (Exception ex) when (ex.InnerException is ArgumentException || ex is ArgumentException)
+            {
+                Console.WriteLine($"ScreenCapture skipped: {ex.Message}");
+                return;
+            }
+            using var _ = stream;
+            var track = stream.GetVideoTracks()[0];
+
+            // Track should be live
+            if (track.ReadyState != "live")
+                throw new Exception($"Expected 'live', got '{track.ReadyState}'");
+
+            // Stop should transition to ended
+            track.Stop();
+            if (track.ReadyState != "ended")
+                throw new Exception($"Expected 'ended' after stop, got '{track.ReadyState}'");
+        }
+
         /// <summary>
         /// Captures real audio frames from the microphone and verifies data arrives.
         /// Desktop: captures from first WASAPI audio input device.

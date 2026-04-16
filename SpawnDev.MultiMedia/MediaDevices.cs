@@ -31,7 +31,11 @@ namespace SpawnDev.MultiMedia
         {
             if (OperatingSystem.IsBrowser())
                 return Browser.BrowserMediaDevices.GetDisplayMedia(constraints);
-            throw new PlatformNotSupportedException("GetDisplayMedia is currently only available in the browser.");
+            if (OperatingSystem.IsWindows())
+                return Windows.WindowsMediaDevices.GetDisplayMedia(constraints);
+            throw new PlatformNotSupportedException(
+                $"GetDisplayMedia is not yet implemented for {System.Runtime.InteropServices.RuntimeInformation.OSDescription}. " +
+                "Currently supported: Browser (Blazor WASM) and Windows.");
         }
 
         /// <summary>

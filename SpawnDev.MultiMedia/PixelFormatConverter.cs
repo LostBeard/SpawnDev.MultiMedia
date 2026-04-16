@@ -62,6 +62,9 @@ namespace SpawnDev.MultiMedia
                 case (VideoPixelFormat.UYVY, VideoPixelFormat.I420):
                     UYVYtoI420(src, dst, width, height);
                     break;
+                case (VideoPixelFormat.MJPG, _):
+                    throw new NotSupportedException(
+                        "MJPG decode requires an Accelerator. Use GpuMjpgDecoder instead of PixelFormatConverter for MJPG frames.");
                 default:
                     throw new NotSupportedException($"No conversion path from {srcFmt} to {dstFmt}");
             }

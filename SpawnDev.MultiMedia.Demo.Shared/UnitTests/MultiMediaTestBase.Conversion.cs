@@ -182,6 +182,201 @@ namespace SpawnDev.MultiMedia.Demo.Shared.UnitTests
             await Task.CompletedTask;
         }
 
+        // ---- YUY2 Conversion ----
+
+        [TestMethod]
+        public async Task PixelConvert_YUY2toI420_KnownPattern()
+        {
+            // 4x2 YUY2 frame: [Y0 U0 Y1 V0] per macro-pixel pair
+            // Row 0: pixel(0,0)=Y:16,U:100 pixel(1,0)=Y:20,V:200 | pixel(2,0)=Y:24,U:110 pixel(3,0)=Y:28,V:210
+            // Row 1: pixel(0,1)=Y:32,U:120 pixel(1,1)=Y:36,V:180 | pixel(2,1)=Y:40,U:130 pixel(3,1)=Y:44,V:190
+            int w = 4, h = 2;
+            var yuy2 = new byte[]
+            {
+                // Row 0: 2 macro-pixels = 8 bytes
+                16, 100, 20, 200,   // Y0=16, U=100, Y1=20, V=200
+                24, 110, 28, 210,   // Y0=24, U=110, Y1=28, V=210
+                // Row 1: 2 macro-pixels = 8 bytes
+                32, 120, 36, 180,   // Y0=32, U=120, Y1=36, V=180
+                40, 130, 44, 190,   // Y0=40, U=130, Y1=44, V=190
+            };
+
+            var i420 = new byte[w * h * 3 / 2]; // 12 bytes
+            PixelFormatConverter.YUY2toI420(yuy2, i420, w, h);
+
+            // Y plane: all 8 luma values in raster order
+            byte[] expectedY = { 16, 20, 24, 28, 32, 36, 40, 44 };
+            for (int i = 0; i < 8; i++)
+                if (i420[i] != expectedY[i])
+                    throw new Exception($"Y[{i}] expected {expectedY[i]}, got {i420[i]}");
+
+            // U plane (2 values, only from even rows for 4:2:0 subsampling): row 0 only
+            // U comes from row 0 macro-pixels: 100, 110
+            if (i420[8] != 100) throw new Exception($"U[0] expected 100, got {i420[8]}");
+            if (i420[9] != 110) throw new Exception($"U[1] expected 110, got {i420[9]}");
+
+            // V plane: row 0 macro-pixels: 200, 210
+            if (i420[10] != 200) throw new Exception($"V[0] expected 200, got {i420[10]}");
+            if (i420[11] != 210) throw new Exception($"V[1] expected 210, got {i420[11]}");
+
+            await Task.CompletedTask;
+        }
+
+        [TestMethod]
+        public async Task PixelConvert_YUY2toBGRA_KnownPattern()
+        {
+            // Single macro-pixel: white (Y=235, U=128, V=128)
+            int w = 2, h = 2;
+            var yuy2 = new byte[]
+            {
+                235, 128, 235, 128, // Row 0: both pixels white
+                235, 128, 235, 128, // Row 1: both pixels white
+            };
+
+            var bgra = new byte[w * h * 4];
+            PixelFormatConverter.YUY2toBGRA(yuy2, bgra, w, h);
+
+            // All 4 pixels should be near-white
+            for (int p = 0; p < w * h; p++)
+            {
+                int b = bgra[p * 4], g = bgra[p * 4 + 1], r = bgra[p * 4 + 2], a = bgra[p * 4 + 3];
+                if (r < 220 || g < 220 || b < 220)
+                    throw new Exception($"Pixel {p} not white enough: R={r} G={g} B={b}");
+                if (a != 255) throw new Exception($"Alpha should be 255, got {a}");
+            }
+
+            await Task.CompletedTask;
+        }
+
+        [TestMethod]
+        public async Task PixelConvert_YUY2toI420_LargerFrame()
+        {
+            // 320x240 frame with gradient pattern, verify via roundtrip to BGRA
+            int w = 320, h = 240;
+            var yuy2 = new byte[w * h * 2];
+            // Fill with a pattern: Y gradient, U=128, V=128 (grayscale)
+            for (int j = 0; j < h; j++)
+            {
+                for (int i = 0; i < w; i += 2)
+                {
+                    int idx = (j * w + i) * 2;
+                    yuy2[idx] = (byte)((j + i) % 256);       // Y0
+                    yuy2[idx + 1] = 128;                       // U
+                    yuy2[idx + 2] = (byte)((j + i + 1) % 256); // Y1
+                    yuy2[idx + 3] = 128;                       // V
+                }
+            }
+
+            var i420 = new byte[w * h * 3 / 2];
+            PixelFormatConverter.YUY2toI420(yuy2, i420, w, h);
+
+            // Verify Y values match what we put in
+            for (int j = 0; j < h; j++)
+            {
+                for (int i = 0; i < w; i++)
+                {
+                    byte expectedY = (byte)((j + i) % 256);
+                    if (i420[j * w + i] != expectedY)
+                        throw new Exception($"Y[{i},{j}] expected {expectedY}, got {i420[j * w + i]}");
+                }
+            }
+
+            // Verify I420 can convert to BGRA without crashing (pipeline integration)
+            var bgra = new byte[w * h * 4];
+            PixelFormatConverter.I420toBGRA(i420, bgra, w, h);
+            // Grayscale: R ~= G ~= B for each pixel
+            int maxDiff = 0;
+            for (int p = 0; p < w * h; p++)
+            {
+                int r = bgra[p * 4 + 2], g = bgra[p * 4 + 1], b = bgra[p * 4];
+                int diff = Math.Max(Math.Abs(r - g), Math.Max(Math.Abs(g - b), Math.Abs(r - b)));
+                if (diff > maxDiff) maxDiff = diff;
+            }
+            // BT.601 with U=V=128 should produce near-equal RGB channels
+            if (maxDiff > 2)
+                throw new Exception($"Grayscale max channel diff = {maxDiff}, expected <= 2");
+
+            await Task.CompletedTask;
+        }
+
+        // ---- UYVY Conversion ----
+
+        [TestMethod]
+        public async Task PixelConvert_UYVYtoI420_KnownPattern()
+        {
+            // 4x2 UYVY frame: [U0 Y0 V0 Y1] per macro-pixel pair (opposite byte order from YUY2)
+            int w = 4, h = 2;
+            var uyvy = new byte[]
+            {
+                // Row 0: 2 macro-pixels = 8 bytes
+                100, 16, 200, 20,   // U=100, Y0=16, V=200, Y1=20
+                110, 24, 210, 28,   // U=110, Y0=24, V=210, Y1=28
+                // Row 1: 2 macro-pixels = 8 bytes
+                120, 32, 180, 36,   // U=120, Y0=32, V=180, Y1=36
+                130, 40, 190, 44,   // U=130, Y0=40, V=190, Y1=44
+            };
+
+            var i420 = new byte[w * h * 3 / 2]; // 12 bytes
+            PixelFormatConverter.UYVYtoI420(uyvy, i420, w, h);
+
+            // Y plane: same luma values as YUY2 test, just different byte positions
+            byte[] expectedY = { 16, 20, 24, 28, 32, 36, 40, 44 };
+            for (int i = 0; i < 8; i++)
+                if (i420[i] != expectedY[i])
+                    throw new Exception($"Y[{i}] expected {expectedY[i]}, got {i420[i]}");
+
+            // U plane (from even rows only): 100, 110
+            if (i420[8] != 100) throw new Exception($"U[0] expected 100, got {i420[8]}");
+            if (i420[9] != 110) throw new Exception($"U[1] expected 110, got {i420[9]}");
+
+            // V plane: 200, 210
+            if (i420[10] != 200) throw new Exception($"V[0] expected 200, got {i420[10]}");
+            if (i420[11] != 210) throw new Exception($"V[1] expected 210, got {i420[11]}");
+
+            await Task.CompletedTask;
+        }
+
+        [TestMethod]
+        public async Task PixelConvert_UYVYtoI420_MatchesYUY2()
+        {
+            // Same logical pixel data in YUY2 and UYVY encoding should produce identical I420 output
+            int w = 64, h = 48;
+            var yuy2 = new byte[w * h * 2];
+            var uyvy = new byte[w * h * 2];
+
+            // Fill both with equivalent data (same Y/U/V, different byte order)
+            var rng = new Random(77);
+            for (int j = 0; j < h; j++)
+            {
+                for (int i = 0; i < w; i += 2)
+                {
+                    byte y0 = (byte)rng.Next(256), y1 = (byte)rng.Next(256);
+                    byte u = (byte)rng.Next(256), v = (byte)rng.Next(256);
+                    int idx = (j * w + i) * 2;
+
+                    // YUY2: Y0 U Y1 V
+                    yuy2[idx] = y0; yuy2[idx + 1] = u; yuy2[idx + 2] = y1; yuy2[idx + 3] = v;
+                    // UYVY: U Y0 V Y1
+                    uyvy[idx] = u; uyvy[idx + 1] = y0; uyvy[idx + 2] = v; uyvy[idx + 3] = y1;
+                }
+            }
+
+            var i420FromYuy2 = new byte[w * h * 3 / 2];
+            var i420FromUyvy = new byte[w * h * 3 / 2];
+            PixelFormatConverter.YUY2toI420(yuy2, i420FromYuy2, w, h);
+            PixelFormatConverter.UYVYtoI420(uyvy, i420FromUyvy, w, h);
+
+            // Must be byte-exact identical
+            int mismatches = 0;
+            for (int i = 0; i < i420FromYuy2.Length; i++)
+                if (i420FromYuy2[i] != i420FromUyvy[i]) mismatches++;
+
+            if (mismatches > 0)
+                throw new Exception($"{mismatches} byte mismatches between YUY2->I420 and UYVY->I420 with equivalent input");
+
+            await Task.CompletedTask;
+        }
+
         // ---- Audio Format Conversion ----
 
         [TestMethod]

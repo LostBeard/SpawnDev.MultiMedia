@@ -65,13 +65,13 @@ The CPU converter is the right foundation. ILGPU converter builds on top of it w
 
 ### Implementation order
 
-- [ ] NV12 -> I420 (Riker's primary need for WebRTC)
-- [ ] NV12 -> BGRA (WPF display)
-- [ ] I420 -> BGRA (received frames display)
-- [ ] BGRA -> I420 (RGB camera sources to WebRTC)
-- [ ] YUY2 -> I420
-- [ ] YUY2 -> BGRA
-- [ ] RGB24 -> BGRA
-- [ ] UYVY -> I420
-- [ ] MJPG decompression (use System.Drawing.Imaging or MF MFT)
-- [ ] Unit tests with known test patterns (color bars, gradients)
+- [x] NV12 -> I420 (Riker's primary need for WebRTC) - CPU + ILGPU kernel
+- [x] NV12 -> BGRA (WPF display) - CPU + ILGPU kernel
+- [x] I420 -> BGRA (received frames display) - CPU + ILGPU kernel
+- [x] BGRA -> I420 (RGB camera sources to WebRTC) - CPU + ILGPU kernel
+- [x] YUY2 -> I420 - CPU + ILGPU kernel
+- [x] YUY2 -> BGRA - CPU + ILGPU kernel
+- [x] RGB24 -> BGRA - CPU + ILGPU kernel
+- [x] UYVY -> I420 - CPU + ILGPU kernel
+- [x] MJPG decompression - GpuMjpgDecoder: ILGPU kernels for dequantize + IDCT + color convert (all backends)
+- [x] Unit tests with known test patterns - CPU tests + GPU-vs-CPU comparison tests for all paths

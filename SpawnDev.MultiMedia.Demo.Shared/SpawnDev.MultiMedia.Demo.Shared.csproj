@@ -9,7 +9,7 @@
 
 	<ItemGroup>
 		<ProjectReference Include="..\SpawnDev.MultiMedia\SpawnDev.MultiMedia.csproj" />
-		<PackageReference Include="SpawnDev.UnitTesting.Blazor" Version="2.4.2" />
+		<PackageReference Include="SpawnDev.UnitTesting.Blazor" Version="2.5.1" />
 	</ItemGroup>
 
 </Project>
