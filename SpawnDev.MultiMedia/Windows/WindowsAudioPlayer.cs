@@ -15,6 +15,7 @@ namespace SpawnDev.MultiMedia.Windows
         private IMMDevice? _device;
         private IntPtr _mixFormatPtr;
         private IAudioTrack? _track;
+        private Action<AudioFrame>? _frameHandler;
         private Thread? _playbackThread;
         private volatile bool _playing;
         private bool _disposed;
@@ -96,6 +97,14 @@ namespace SpawnDev.MultiMedia.Windows
         public void Stop()
         {
             _playing = false;
+
+            // Unsubscribe from track events to prevent leaks
+            if (_track != null && _frameHandler != null)
+            {
+                _track.OnFrame -= _frameHandler;
+                _frameHandler = null;
+            }
+
             _playbackThread?.Join(2000);
             _playbackThread = null;
 
@@ -107,14 +116,17 @@ namespace SpawnDev.MultiMedia.Windows
 
         private void PlaybackLoop()
         {
+            var pendingFrames = new System.Collections.Concurrent.ConcurrentQueue<AudioFrame>();
+
+            // Subscribe using stored delegate so we can unsubscribe later
+            if (_track != null)
+            {
+                _frameHandler = frame => pendingFrames.Enqueue(frame);
+                _track.OnFrame += _frameHandler;
+            }
+
             try
             {
-                var pendingFrames = new Queue<AudioFrame>();
-                if (_track != null)
-                {
-                    _track.OnFrame += frame => pendingFrames.Enqueue(frame);
-                }
-
                 while (_playing && _renderClient != null && _audioClient != null)
                 {
                     Thread.Sleep(5);
@@ -123,42 +135,37 @@ namespace SpawnDev.MultiMedia.Windows
                     var availableFrames = _bufferFrameCount - padding;
                     if (availableFrames == 0) continue;
 
-                    if (_muted || pendingFrames.Count == 0)
+                    if (_muted || pendingFrames.IsEmpty)
                     {
-                        // Write silence
-                        var hr = _renderClient.GetBuffer(availableFrames, out var dataPtr);
+                        var hr = _renderClient.GetBuffer(availableFrames, out _);
                         if (hr >= 0)
                             _renderClient.ReleaseBuffer(availableFrames, 2); // AUDCLNT_BUFFERFLAGS_SILENT
                         continue;
                     }
 
-                    // Write audio data from pending frames
                     var hr2 = _renderClient.GetBuffer(availableFrames, out var bufferPtr);
                     if (hr2 < 0) continue;
 
                     int bytesAvailable = (int)availableFrames * _blockAlign;
                     int bytesWritten = 0;
 
-                    while (bytesWritten < bytesAvailable && pendingFrames.Count > 0)
+                    while (bytesWritten < bytesAvailable && pendingFrames.TryDequeue(out var frame))
                     {
-                        var frame = pendingFrames.Peek();
                         var data = frame.Data.Span;
                         int toCopy = Math.Min(data.Length, bytesAvailable - bytesWritten);
                         Marshal.Copy(data.Slice(0, toCopy).ToArray(), 0,
                             bufferPtr + bytesWritten, toCopy);
                         bytesWritten += toCopy;
-
-                        if (toCopy >= data.Length)
-                            pendingFrames.Dequeue();
-                        else
-                            break; // Partial frame - leave it for next round
                     }
 
                     uint framesWritten = (uint)(bytesWritten / _blockAlign);
                     _renderClient.ReleaseBuffer(framesWritten, 0);
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"WASAPI playback error: {ex.Message}");
+            }
         }
 
         public void Dispose()

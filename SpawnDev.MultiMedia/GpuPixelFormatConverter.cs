@@ -46,9 +46,9 @@ namespace SpawnDev.MultiMedia
         /// Source data is uploaded, kernel runs, result is downloaded.
         /// Returns original frame if already in target format.
         /// </summary>
-        public async Task<VideoFrame> ConvertAsync(VideoFrame source, VideoPixelFormat target)
+        public Task<VideoFrame> ConvertAsync(VideoFrame source, VideoPixelFormat target)
         {
-            if (source.Format == target) return source;
+            if (source.Format == target) return Task.FromResult(source);
 
             int w = source.Width, h = source.Height;
             int dstSize = PixelFormatConverter.GetFrameSize(target, w, h);
@@ -65,7 +65,7 @@ namespace SpawnDev.MultiMedia
             var result = new byte[dstSize];
             dstBuffer.CopyToCPU(result);
 
-            return new VideoFrame(w, h, target, new ReadOnlyMemory<byte>(result), source.Timestamp);
+            return Task.FromResult(new VideoFrame(w, h, target, new ReadOnlyMemory<byte>(result), source.Timestamp));
         }
 
         /// <summary>

@@ -160,6 +160,7 @@ _debugdump/
 
 # Test results
 TestResults/
+WGSLDumps/
 _testresults/
 
 # Init logs

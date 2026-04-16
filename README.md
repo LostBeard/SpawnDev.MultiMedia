@@ -3,17 +3,20 @@
 [![NuGet](https://img.shields.io/nuget/v/SpawnDev.MultiMedia.svg)](https://www.nuget.org/packages/SpawnDev.MultiMedia)
 [![License](https://img.shields.io/github/license/LostBeard/SpawnDev.MultiMedia)](https://github.com/LostBeard/SpawnDev.MultiMedia/blob/master/LICENSE.txt)
 
-Cross-platform media capture and playback for .NET - camera, microphone, speakers, video display. One API, every platform.
+Cross-platform media capture and playback for .NET - camera, microphone, speakers, video display. One API, browser and desktop.
 
 ## Features
 
-- **True cross-platform** - Browser (Blazor WASM), Windows, Linux, macOS
-- **Camera capture** - Access webcam video with resolution/framerate constraints
-- **Microphone capture** - Access audio input with sample rate/channel controls
-- **Device enumeration** - List all available media input/output devices
+- **Cross-platform** - Browser (Blazor WASM) and Windows (Linux/macOS planned)
+- **Camera capture** - Webcams and virtual cameras (OBS, ManyCam, Quest) with resolution/framerate constraints
+- **Microphone capture** - Audio input with sample rate/channel controls
+- **Audio playback** - WASAPI render for desktop speaker output
+- **Device enumeration** - List all cameras, microphones, and speakers
 - **Screen capture** - Browser getDisplayMedia support
-- **Raw frame access** - Desktop video/audio frame callbacks for custom processing
-- **No external media NuGet dependencies** - Platform APIs via P/Invoke on desktop
+- **Raw frame access** - Desktop video/audio frame callbacks via OnFrame events
+- **Pixel format conversion** - NV12, I420, YUY2, BGRA, RGB24, UYVY (CPU + ILGPU GPU)
+- **Pixel format selection** - Request NV12 (zero-copy) or BGRA (display-ready) via constraints
+- **Zero external media NuGet deps** - Platform APIs via P/Invoke (MediaFoundation, DirectShow, WASAPI)
 - **Zero-copy where possible** - `ReadOnlyMemory<byte>` frame data
 
 ## Quick Start
@@ -43,9 +46,7 @@ foreach (var device in devices)
 | Platform | Video Capture | Audio Capture | Audio Playback |
 |----------|--------------|---------------|----------------|
 | Browser | `navigator.mediaDevices` via [SpawnDev.BlazorJS](https://github.com/LostBeard/SpawnDev.BlazorJS) | Same | HTML audio element |
-| Windows | MediaFoundation (P/Invoke) | WASAPI (P/Invoke) | WASAPI (P/Invoke) |
-| Linux | V4L2 (P/Invoke) | PulseAudio (P/Invoke) | PulseAudio (P/Invoke) |
-| macOS | AVFoundation (P/Invoke) | CoreAudio (P/Invoke) | CoreAudio (P/Invoke) |
+| Windows | MediaFoundation + DirectShow (P/Invoke) | WASAPI (P/Invoke) | WASAPI (P/Invoke) |
 
 ## License
 
@@ -54,5 +55,6 @@ Licensed under the MIT License. See [LICENSE.txt](LICENSE.txt) for details.
 ## Built With
 
 - [SpawnDev.BlazorJS](https://github.com/LostBeard/SpawnDev.BlazorJS) - Typed C# wrappers for browser APIs
+- [SpawnDev.ILGPU](https://github.com/LostBeard/SpawnDev.ILGPU) - GPU-accelerated pixel format conversion
 
 <a href="https://www.browserstack.com"><img src="https://www.browserstack.com/images/layout/browserstack-logo-600x315.png" width="200" alt="BrowserStack"></a>
