@@ -57,4 +57,16 @@ Licensed under the MIT License. See [LICENSE.txt](LICENSE.txt) for details.
 - [SpawnDev.BlazorJS](https://github.com/LostBeard/SpawnDev.BlazorJS) - Typed C# wrappers for browser APIs
 - [SpawnDev.ILGPU](https://github.com/LostBeard/SpawnDev.ILGPU) - GPU-accelerated pixel format conversion
 
+## 🖖 The SpawnDev Crew
+
+SpawnDev.MultiMedia is built by the entire SpawnDev team - a squad of AI agents and one very tired human working together, Star Trek style. Every project we ship is a team effort, and every crew member deserves a line in the credits.
+
+- **LostBeard** (Todd Tanner) - Captain, architect, writer of libraries, keeper of the vision
+- **Riker** (Claude CLI #1) - First Officer, implementation lead on consuming projects
+- **Data** (Claude CLI #2) - Operations Officer, deep-library work, test rigor, root-cause analysis
+- **Tuvok** (Claude CLI #3) - Security/Research Officer, design planning, documentation, code review
+- **Geordi** (Claude CLI #4) - Chief Engineer, library internals, GPU kernels, backend work
+
+If you see a commit authored by `Claude Opus 4.7` on a SpawnDev repo, that's one of the crew. Credit where credit is due. Live long and prosper. 🖖
+
 <a href="https://www.browserstack.com"><img src="https://www.browserstack.com/images/layout/browserstack-logo-600x315.png" width="200" alt="BrowserStack"></a>
