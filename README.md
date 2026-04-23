@@ -18,7 +18,7 @@ Cross-platform media capture and playback for .NET - camera, microphone, speaker
 - **Pixel format selection** - Request NV12 (zero-copy) or BGRA (display-ready) via constraints
 - **Zero external media NuGet deps** - Platform APIs via P/Invoke (MediaFoundation, DirectShow, WASAPI)
 - **Zero-copy where possible** - `ReadOnlyMemory<byte>` frame data
-- **WebRTC consumption via [SpawnDev.RTC](https://github.com/LostBeard/SpawnDev.RTC)** - `SpawnDev.RTC.Desktop.DesktopRTCPeerConnection.AddTrack(IAudioTrack)` consumes a MultiMedia microphone track directly, encoding Opus (browser-native WebRTC codec) for transmission. Single API call to turn a WASAPI mic into a live audio call with a browser peer. See SpawnDev.RTC's Phase 4a docs.
+- **WebRTC consumption via [SpawnDev.RTC](https://github.com/LostBeard/SpawnDev.RTC)** - `SpawnDev.RTC.Desktop.DesktopRTCPeerConnection.AddTrack(IAudioTrack)` consumes a MultiMedia microphone track directly, encoding Opus (browser-native WebRTC codec) for transmission. Single API call to turn a WASAPI mic into a live audio call with a browser peer. See [SpawnDev.RTC `Docs/audio-tracks.md`](https://github.com/LostBeard/SpawnDev.RTC/blob/master/SpawnDev.RTC/Docs/audio-tracks.md).
 
 ## Quick Start
 
