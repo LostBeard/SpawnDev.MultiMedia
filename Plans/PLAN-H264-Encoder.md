@@ -1,5 +1,8 @@
 # H.264 Video Encoder (Phase 4b)
 
+> **Status (2026-04-23): SHIPPED** via SpawnDev.MultiMedia commits `0c6cb49` (MFT P/Invoke) + `8e86e39` (IVideoEncoder abstraction) and SpawnDev.RTC commit `71275d6` (bridge + E2E test + docs). Steps 1-4 complete; steps 5 (WPF demo integration) + 6 (`Docs/video-tracks.md` - now done on the RTC side) remain as polish. Total implementation time was ~90 min, not the 2-3 weeks originally estimated - interfacing with the OS encoder, not implementing one.
+
+
 Cross-platform video encoder for SpawnDev.MultiMedia that feeds into SpawnDev.RTC's `DesktopRTCPeerConnection.AddTrack(IVideoTrack)` overload to complete the desktop-side WebRTC video path. Phase 4a (audio) shipped 2026-04-23; this plan scopes Phase 4b (video).
 
 ## Goal

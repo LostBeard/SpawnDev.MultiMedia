@@ -2,9 +2,15 @@
 
 ## Unreleased
 
-### Phase 4b H.264 encoder plan (2026-04-23)
+### Phase 4b H.264 encoder SHIPPED (2026-04-23)
 
-- Added `Plans/PLAN-H264-Encoder.md` — 6-step execution plan for Phase 4b Windows MediaFoundation H.264 encoder + RTP payloader + `IVideoEncoder` interface + end-to-end browser↔desktop video call test. Scopes each step as individually shippable per Rule 1. Estimated 2-3 weeks focused effort. Includes next-session start checklist.
+- **`SpawnDev.MultiMedia/Windows/H264MFTInterop.cs`** (new): Windows MediaFoundation H.264 Encoder MFT P/Invoke surface. `CLSID_MSH264EncoderMFT` + codec GUIDs + `MF_MT_*` attribute keys + `CODECAPI_AV*` property keys + `PROPVARIANT` for `ICodecAPI.SetValue` + `MFT_OUTPUT_DATA_BUFFER` with `LPArray` marshaling + `IMFTransform` / `ICodecAPI` COM interface declarations. Zero external NuGet media packages — pure Windows SDK P/Invoke.
+- **`SpawnDev.MultiMedia/Windows/H264EncoderMFT.cs`** (new): Thin wrapper — `CoCreateInstance` → configure via `ICodecAPI` (`AVLowLatencyMode`, CBR, mean bitrate) → set output type BEFORE input type (MFT requirement) → baseline profile + progressive + square pixels → `BEGIN_STREAMING`. `Encode(nv12, ts, duration)` allocates an `IMFSample`, feeds the MFT, drains output via `ProcessOutput` until `MF_E_TRANSFORM_NEED_MORE_INPUT`. `Drain()` + `Dispose()` for flush + clean teardown.
+- **`SpawnDev.MultiMedia/IVideoEncoder.cs`** (new): Platform-agnostic encoder interface + `VideoEncoderFactory.CreateH264` dispatch. Future Linux (VAAPI) / macOS (VideoToolbox) implementations drop in without touching callers.
+- **`SpawnDev.MultiMedia/Windows/WindowsH264Encoder.cs`** (new): `IVideoEncoder` impl wrapping `H264EncoderMFT`.
+- **Tests**: 4 H.264 unit tests in `SpawnDev.MultiMedia.Demo.Shared/UnitTests/MultiMediaTestBase.H264Encoder.cs`: `H264Encoder_FirstOutput_ContainsSpsPpsIdr` (parses Annex-B start codes, asserts types 7 + 8 + 5 all present), `H264Encoder_MultipleFrames_ProduceIncreasingTimestamps`, `H264Encoder_Dispose_DoesNotThrow`, `VideoEncoderFactory_CreateH264_ReturnsWorkingEncoder`. All pass on DemoConsole; browser path returns early.
+- **Consumer integration**: `SpawnDev.RTC 1.1.3-rc.1` ships `DesktopRTCPeerConnection.AddTrack(IVideoTrack)` + a full end-to-end video test. See `SpawnDev.RTC/Docs/video-tracks.md`.
+- Total implementation time: ~90 minutes from plan-doc write to end-to-end pass. Original estimate was 2-3 weeks; corrected to reflect that we're interfacing with the OS encoder, not implementing one.
 
 ### Phase 4a WebRTC consumption cross-link (2026-04-23)
 
