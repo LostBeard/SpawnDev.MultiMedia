@@ -45,6 +45,31 @@ namespace SpawnDev.MultiMedia.Demo.Shared.UnitTests
             await Task.CompletedTask;
         }
 
+        [TestMethod]
+        public async Task VideoEncoderFactory_CreateH264_ReturnsWorkingEncoder()
+        {
+            if (OperatingSystem.IsBrowser()) return;
+
+            // Exercises the IVideoEncoder interface + VideoEncoderFactory dispatch layer.
+            // Same SPS+PPS+IDR check as H264Encoder_FirstOutput but through the public
+            // platform-agnostic surface that SpawnDev.RTC's video bridge will consume.
+            using var enc = VideoEncoderFactory.CreateH264(320, 240, 30, 500_000);
+            if (enc.Codec != "h264") throw new Exception($"Codec: {enc.Codec}");
+            if (enc.Width != 320) throw new Exception($"Width: {enc.Width}");
+            if (enc.PixelFormat != VideoPixelFormat.NV12) throw new Exception($"PixelFormat: {enc.PixelFormat}");
+
+            var nv12 = BuildGreyNV12(320, 240);
+            byte[]? first = null;
+            for (int i = 0; i < 10 && first == null; i++)
+                first = enc.Encode(nv12, i * 333_333L, 333_333L);
+            if (first == null) throw new Exception("VideoEncoderFactory-built encoder produced no output");
+
+            var types = ScanNalTypes(first);
+            if (!types.Contains(7) || !types.Contains(8) || !types.Contains(5))
+                throw new Exception($"IVideoEncoder output missing SPS/PPS/IDR. Got: {string.Join(",", types)}");
+            await Task.CompletedTask;
+        }
+
         [SupportedOSPlatform("windows")]
         private static void RunH264FirstOutputTest()
         {
