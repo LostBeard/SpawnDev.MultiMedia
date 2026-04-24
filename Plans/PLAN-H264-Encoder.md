@@ -106,14 +106,16 @@ Plus: `DesktopRTCPeerConnection.AddTrack(IVideoTrack)` + `AddTrack(MultiMediaVid
 
 Manual test plan: WPF user opens the tab in a browser, clicks accept, sees WPF camera output in the browser `<video>` element.
 
-### Step 6: Docs/
+### Step 6: Docs/ — SHIPPED
 
-Add `SpawnDev.RTC/Docs/video-tracks.md` mirroring `audio-tracks.md`:
-- Quick start (Windows desktop → browser)
-- Interface + overload surface
-- Codec negotiation notes (H.264 profile compatibility with Chrome / Firefox / Safari)
-- Known limitations (Windows-only until Phase 5 Linux/macOS)
-- RTP payload format reference (RFC 6184 link + what we implement)
+`SpawnDev.RTC/Docs/video-tracks.md` (98 lines) covers:
+- `IVideoTrack` / `MultiMediaVideoSource` / `AddTrack(IVideoTrack)` overloads
+- H.264 encoder selection (Windows MF MFT via `VideoEncoderFactory.CreateH264`)
+- RFC 6184 RTP payload format delegation to SipSorcery's packetizer
+- Known limitations / runtime gates
+
+Paired with `audio-tracks.md` (Phase 4a) so the two-track pair has matching
+documentation shape.
 
 ## Estimated effort (2-3 weeks focused)
 
