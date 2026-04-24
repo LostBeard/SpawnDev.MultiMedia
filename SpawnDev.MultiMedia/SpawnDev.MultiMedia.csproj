@@ -4,7 +4,8 @@
 		<TargetFramework>net10.0</TargetFramework>
 		<ImplicitUsings>enable</ImplicitUsings>
 		<Nullable>enable</Nullable>
-		<Version>0.1.0</Version>
+		<Version>0.2.0-rc.1</Version>
+		<PackageReleaseNotes>v0.2.0-rc.1: Linux platform scaffold. `Linux/LinuxMediaDevices.cs` implements real device enumeration via `/dev/video*` (V4L2 capture nodes) + `/proc/asound/cards` (ALSA). `MediaDevices.EnumerateDevices()` now returns real devices on Linux instead of throwing. `MediaDevices.GetUserMedia` / `GetDisplayMedia` still throw `PlatformNotSupportedException` on Linux with clear messages — V4L2 ioctl + PulseAudio capture is documented future work (~500 lines P/Invoke per component). New `Docs/linux.md` covers the current state + WSL2 testing runbook (USB camera via `usbipd`, ALSA via PulseAudio WSL interop). macOS still unsupported.</PackageReleaseNotes>
 		<GeneratePackageOnBuild>True</GeneratePackageOnBuild>
 		<GenerateDocumentationFile>true</GenerateDocumentationFile>
 		<EmbedAllSources>true</EmbedAllSources>
