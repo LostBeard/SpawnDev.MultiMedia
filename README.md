@@ -33,6 +33,29 @@ dotnet add package SpawnDev.MultiMedia --prerelease
 - **Zero external media NuGet deps** — Platform APIs via P/Invoke (MediaFoundation, DirectShow, WASAPI on Windows; V4L2 / PulseAudio / ALSA stubs on Linux).
 - **WebRTC consumption via [SpawnDev.RTC](https://github.com/LostBeard/SpawnDev.RTC)** — `SpawnDev.RTC.Desktop.DesktopRTCPeerConnection.AddTrack(IAudioTrack)` and `AddTrack(IVideoTrack)` consume MultiMedia microphone + camera tracks directly; the audio bridge encodes Opus / PCMU / PCMA / G722 via SipSorcery's RTP audio path, the video bridge encodes H.264 via the MFT and emits RFC 6184 RTP. One API call to turn a WASAPI mic + webcam into a live audio + video call with a browser peer. See [SpawnDev.RTC `Docs/audio-tracks.md`](https://github.com/LostBeard/SpawnDev.RTC/blob/master/SpawnDev.RTC/Docs/audio-tracks.md) and [`Docs/video-tracks.md`](https://github.com/LostBeard/SpawnDev.RTC/blob/master/SpawnDev.RTC/Docs/video-tracks.md).
 
+## DI registration (optional)
+
+For apps that use the GPU-backed helpers (`GpuPixelFormatConverter`, `GpuMjpgDecoder`), register them via DI so they share a single ILGPU `Accelerator`:
+
+```csharp
+// Program.cs
+using ILGPU;
+using ILGPU.Runtime;
+using SpawnDev.MultiMedia;
+
+// SpawnDev.ILGPU consumers typically already have an Accelerator registered.
+// If you don't, the simplest setup:
+builder.Services.AddSingleton<Context>(_ => Context.CreateDefault());
+builder.Services.AddSingleton<Accelerator>(sp =>
+    sp.GetRequiredService<Context>().GetPreferredDevice(false)
+        .CreateAccelerator(sp.GetRequiredService<Context>()));
+
+// Then:
+builder.Services.AddMultiMedia();
+```
+
+`MediaDevices`, `PixelFormatConverter`, and `MjpgDecoder` are stateless — no DI registration needed.
+
 ## Quick Start
 
 ```csharp
