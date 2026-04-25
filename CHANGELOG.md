@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.2.0-rc.1 (2026-04-23 → 2026-04-25)
+
+This RC bundles Phase 4b (H.264 encoder), Phase 4a WebRTC cross-link polish, and partial Linux device enumeration on top of 0.1.0. Browser + Windows desktop remain feature-complete for capture / playback / conversion; Linux enumeration is live, capture in progress.
+
+### Linux device enumeration (2026-04-25)
+
+- **`SpawnDev.MultiMedia/Linux/LinuxMediaDevices.cs`** (new): `MediaDevices.EnumerateDevices()` returns video inputs from `/dev/video*` and audio inputs from `/proc/asound/cards` (ALSA). No V4L2 ioctl needed for enumeration — pure filesystem reads. `GetUserMedia(...)` still throws `PlatformNotSupportedException`; capture path documented in [`Docs/linux.md`](Docs/linux.md) (V4L2 + PulseAudio / ALSA P/Invoke remaining).
 
 ### Phase 4b H.264 encoder SHIPPED (2026-04-23)
 
