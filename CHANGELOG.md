@@ -1,8 +1,14 @@
 # Changelog
 
-## 0.2.0-rc.1 (2026-04-23 → 2026-04-25)
+## 0.2.0 (2026-04-25 stable)
 
-This RC bundles Phase 4b (H.264 encoder), Phase 4a WebRTC cross-link polish, and partial Linux device enumeration on top of 0.1.0. Browser + Windows desktop remain feature-complete for capture / playback / conversion; Linux enumeration is live, capture in progress.
+First minor cut since 0.1.0. Bundles Phase 4b (H.264 encoder), Phase 4a WebRTC cross-link polish, partial Linux device enumeration, IAudioPlayer test coverage, and a DI registration helper. Browser + Windows desktop remain feature-complete for capture / playback / conversion; Linux enumeration is live; Linux capture (`GetUserMedia`/`GetDisplayMedia`) and macOS remain documented gaps.
+
+PlaywrightMultiTest verification: **162 / 0 / 0 in 51s** (up from 146/0/0 at 0.1.0; +16 from new H.264 + IAudioPlayer tests).
+
+### DI registration helper (2026-04-25)
+
+- `MultiMediaServiceCollectionExtensions.AddMultiMedia()` — registers `GpuPixelFormatConverter` + `GpuMjpgDecoder` as singletons sharing the consumer's ILGPU `Accelerator`. Stateless types (`MediaDevices`, `PixelFormatConverter`, `MjpgDecoder`) intentionally not registered. README "DI registration (optional)" section walks through Program.cs setup.
 
 ### Linux device enumeration (2026-04-25)
 
