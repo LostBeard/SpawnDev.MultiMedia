@@ -1,15 +1,15 @@
-using SpawnDev.BlazorJS.JSObjects;
+using SpawnDev.SpawnJS.JSObjects;
 
 namespace SpawnDev.MultiMedia.Browser
 {
     /// <summary>
     /// Browser implementation of IMediaStreamTrack.
-    /// Wraps the native browser MediaStreamTrack via SpawnDev.BlazorJS.
+    /// Wraps the native browser MediaStreamTrack via SpawnDev.SpawnJS.
     /// </summary>
     public class BrowserMediaStreamTrack : IMediaStreamTrack
     {
         /// <summary>
-        /// Direct access to the underlying BlazorJS MediaStreamTrack JSObject.
+        /// Direct access to the underlying MediaStreamTrack JS object.
         /// </summary>
         public MediaStreamTrack NativeTrack { get; }
 
@@ -37,7 +37,7 @@ namespace SpawnDev.MultiMedia.Browser
         public string ContentHint
         {
             get => NativeTrack.ContentHint ?? "";
-            set { /* BlazorJS ContentHint is read-only from C# side */ }
+            set { /* ContentHint is read-only from C# side */ }
         }
 
         public MediaTrackSettings GetSettings()
@@ -71,7 +71,7 @@ namespace SpawnDev.MultiMedia.Browser
 
         public Task ApplyConstraints(MediaTrackConstraints constraints)
         {
-            var jsc = new SpawnDev.BlazorJS.JSObjects.MediaTrackConstraints();
+            var jsc = new SpawnDev.SpawnJS.JSObjects.MediaTrackConstraints();
             if (constraints.Width.HasValue) jsc.Width = (uint)constraints.Width.Value;
             if (constraints.Height.HasValue) jsc.Height = (uint)constraints.Height.Value;
             if (constraints.FrameRate.HasValue) jsc.FrameRate = constraints.FrameRate.Value;

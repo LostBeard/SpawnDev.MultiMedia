@@ -2,7 +2,7 @@ namespace SpawnDev.MultiMedia
 {
     /// <summary>
     /// Cross-platform media stream track - a single audio or video track.
-    /// Browser: wraps native MediaStreamTrack via SpawnDev.BlazorJS.
+    /// Browser: wraps native MediaStreamTrack via SpawnDev.SpawnJS.
     /// Desktop: wraps platform-specific capture (MediaFoundation, WASAPI, etc.).
     /// </summary>
     public interface IMediaStreamTrack : IDisposable

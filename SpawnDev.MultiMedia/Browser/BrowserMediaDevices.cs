@@ -1,20 +1,20 @@
-using SpawnDev.BlazorJS;
-using SpawnDev.BlazorJS.JSObjects;
+using SpawnDev.SpawnJS;
+using SpawnDev.SpawnJS.JSObjects;
 
 namespace SpawnDev.MultiMedia.Browser
 {
     /// <summary>
     /// Browser implementation of media device access.
-    /// Wraps navigator.mediaDevices via SpawnDev.BlazorJS.
+    /// Wraps navigator.mediaDevices via SpawnDev.SpawnJS.
     /// </summary>
     public static class BrowserMediaDevices
     {
         public static async Task<IMediaStream> GetUserMedia(MediaStreamConstraints constraints)
         {
-            var JS = BlazorJSRuntime.JS;
+            var JS = SpawnJSRuntime.Instance;
             using var navigator = JS.Get<Navigator>("navigator");
             using var mediaDevices = navigator.MediaDevices;
-            var jsConstraints = ToBlazorJSConstraints(constraints);
+            var jsConstraints = ToJSConstraints(constraints);
             var stream = await mediaDevices.GetUserMedia(jsConstraints);
             if (stream == null) throw new InvalidOperationException("getUserMedia returned null.");
             return new BrowserMediaStream(stream);
@@ -22,13 +22,13 @@ namespace SpawnDev.MultiMedia.Browser
 
         public static async Task<IMediaStream> GetDisplayMedia(MediaStreamConstraints? constraints)
         {
-            var JS = BlazorJSRuntime.JS;
+            var JS = SpawnJSRuntime.Instance;
             using var navigator = JS.Get<Navigator>("navigator");
             using var mediaDevices = navigator.MediaDevices;
             MediaStream? stream;
             if (constraints != null)
             {
-                var jsConstraints = ToBlazorJSConstraints(constraints);
+                var jsConstraints = ToJSConstraints(constraints);
                 stream = await mediaDevices.GetDisplayMedia(jsConstraints);
             }
             else
@@ -41,7 +41,7 @@ namespace SpawnDev.MultiMedia.Browser
 
         public static async Task<MediaDeviceInfo[]> EnumerateDevices()
         {
-            var JS = BlazorJSRuntime.JS;
+            var JS = SpawnJSRuntime.Instance;
             using var navigator = JS.Get<Navigator>("navigator");
             using var mediaDevices = navigator.MediaDevices;
             var jsDevices = await mediaDevices.EnumerateDevices();
@@ -60,26 +60,26 @@ namespace SpawnDev.MultiMedia.Browser
             return result;
         }
 
-        private static SpawnDev.BlazorJS.JSObjects.MediaStreamConstraints ToBlazorJSConstraints(MediaStreamConstraints constraints)
+        private static SpawnDev.SpawnJS.JSObjects.MediaStreamConstraints ToJSConstraints(MediaStreamConstraints constraints)
         {
-            var jsc = new SpawnDev.BlazorJS.JSObjects.MediaStreamConstraints();
+            var jsc = new SpawnDev.SpawnJS.JSObjects.MediaStreamConstraints();
 
             if (constraints.Audio?.Constraints != null)
-                jsc.Audio = ToBlazorJSTrackConstraints(constraints.Audio.Constraints);
+                jsc.Audio = ToJSTrackConstraints(constraints.Audio.Constraints);
             else if (constraints.Audio?.IsRequested == true)
                 jsc.Audio = true;
 
             if (constraints.Video?.Constraints != null)
-                jsc.Video = ToBlazorJSTrackConstraints(constraints.Video.Constraints);
+                jsc.Video = ToJSTrackConstraints(constraints.Video.Constraints);
             else if (constraints.Video?.IsRequested == true)
                 jsc.Video = true;
 
             return jsc;
         }
 
-        private static SpawnDev.BlazorJS.JSObjects.MediaTrackConstraints ToBlazorJSTrackConstraints(MediaTrackConstraints c)
+        private static SpawnDev.SpawnJS.JSObjects.MediaTrackConstraints ToJSTrackConstraints(MediaTrackConstraints c)
         {
-            var jsc = new SpawnDev.BlazorJS.JSObjects.MediaTrackConstraints();
+            var jsc = new SpawnDev.SpawnJS.JSObjects.MediaTrackConstraints();
             if (c.Width.HasValue) jsc.Width = (uint)c.Width.Value;
             if (c.Height.HasValue) jsc.Height = (uint)c.Height.Value;
             if (c.FrameRate.HasValue) jsc.FrameRate = c.FrameRate.Value;

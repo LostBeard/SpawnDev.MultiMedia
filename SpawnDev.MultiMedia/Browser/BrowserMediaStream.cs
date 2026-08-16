@@ -1,15 +1,15 @@
-using SpawnDev.BlazorJS.JSObjects;
+using SpawnDev.SpawnJS.JSObjects;
 
 namespace SpawnDev.MultiMedia.Browser
 {
     /// <summary>
     /// Browser implementation of IMediaStream.
-    /// Wraps the native browser MediaStream via SpawnDev.BlazorJS.
+    /// Wraps the native browser MediaStream via SpawnDev.SpawnJS.
     /// </summary>
     public class BrowserMediaStream : IMediaStream
     {
         /// <summary>
-        /// Direct access to the underlying BlazorJS MediaStream JSObject.
+        /// Direct access to the underlying MediaStream JS object.
         /// </summary>
         public MediaStream NativeStream { get; }
 

@@ -2,7 +2,7 @@ namespace SpawnDev.MultiMedia
 {
     /// <summary>
     /// Cross-platform media device access.
-    /// Browser: wraps navigator.mediaDevices via SpawnDev.BlazorJS.
+    /// Browser: wraps navigator.mediaDevices via SpawnDev.SpawnJS.
     /// Windows: MediaFoundation + DirectShow (video), WASAPI (audio) via P/Invoke.
     /// Linux: device enumeration via /dev/video* and /proc/asound/cards; capture pending V4L2/PulseAudio impl.
     /// macOS: not yet implemented.

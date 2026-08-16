@@ -4,8 +4,8 @@
 		<TargetFramework>net10.0</TargetFramework>
 		<ImplicitUsings>enable</ImplicitUsings>
 		<Nullable>enable</Nullable>
-		<Version>0.2.0</Version>
-		<PackageReleaseNotes>v0.2.0 stable: First minor cut since 0.1.0. Bundles Phase 4a/4b consumer-side polish, the H.264 encoder, IAudioPlayer testing surface, Linux device enumeration, and a DI registration helper. (1) **H.264 encoder (Windows)** — new `IVideoEncoder` interface + `VideoEncoderFactory.CreateH264()` wrapping `H264EncoderMFT` (Windows MediaFoundation MFT, baseline profile, low-latency, CBR). Outputs Annex-B NAL units; consumed by SpawnDev.RTC's `MultiMediaVideoSource` for cross-platform video calls. Hardware-accelerated where available (Intel Quick Sync / NVIDIA NVENC / AMD VCE). 4 unit tests assert SPS+PPS+IDR in first output, increasing timestamps, dispose safety, factory contract. (2) **Linux device enumeration** — `Linux/LinuxMediaDevices.cs` returns real video inputs from `/dev/video*` and audio inputs from `/proc/asound/cards`. `EnumerateDevices()` works on Linux today; `GetUserMedia`/`GetDisplayMedia` still throw `PlatformNotSupportedException` (V4L2 ioctl + PulseAudio P/Invoke is documented future work). New `Docs/linux.md` covers WSL2 testing. (3) **IAudioPlayer test coverage** — 4 lifecycle + property tests for `WindowsAudioPlayer`. (4) **WebRTC consumption cross-link** — README updated to describe both `AddTrack(IAudioTrack)` and `AddTrack(IVideoTrack)` paths through SpawnDev.RTC.Desktop. (5) **DI registration** — new `services.AddMultiMedia()` extension registers `GpuPixelFormatConverter` + `GpuMjpgDecoder` as singletons sharing the consumer's ILGPU `Accelerator`. (6) **Tuvok's PMT enumeration speedup** — replaces per-row Playwright IPC with one `Page.EvaluateAsync`; sub-second test discovery. PlaywrightMultiTest full sweep: **162 / 0 / 0 in 51s** (vs 146 baseline; +16 from new tests). macOS remains unsupported (Phase 5).</PackageReleaseNotes>
+		<Version>1.0.0-preview.1</Version>
+		<PackageReleaseNotes>v1.0.0 (BREAKING): Browser interop moves from SpawnDev.BlazorJS to SpawnDev.SpawnJS (JS values cross as numeric object-table ids, no per-object JSObject allocation). Also consumes SpawnDev.ILGPU 5.0.0 (its own SpawnJS switch). Browser media wrappers (`SpawnDev.SpawnJS.JSObjects.MediaStream`/`MediaStreamTrack`/`MediaDevices`) keep their names; no desktop (MediaFoundation/WASAPI/DirectShow) behavior changes. See CHANGELOG.md.</PackageReleaseNotes>
 		<GeneratePackageOnBuild>True</GeneratePackageOnBuild>
 		<GenerateDocumentationFile>true</GenerateDocumentationFile>
 		<EmbedAllSources>true</EmbedAllSources>
@@ -30,8 +30,8 @@
 
 	<ItemGroup>
 		<PackageReference Include="Microsoft.AspNetCore.Components.Web" Version="10.0.2" />
-		<PackageReference Include="SpawnDev.BlazorJS" Version="3.5.1" />
-		<PackageReference Include="SpawnDev.ILGPU" Version="4.9.1" />
+		<PackageReference Include="SpawnDev.SpawnJS" Version="2.0.9" />
+		<PackageReference Include="SpawnDev.ILGPU" Version="5.0.0" />
 	</ItemGroup>
 
 	<ItemGroup>
