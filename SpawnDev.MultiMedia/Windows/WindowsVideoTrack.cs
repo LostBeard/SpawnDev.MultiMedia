@@ -26,6 +26,9 @@ namespace SpawnDev.MultiMedia.Windows
         // Shared state
         private volatile bool _capturing;
         private bool _disposed;
+        // Set when Dispose runs ON the capture thread (from an OnFrame handler): the capture loop is still
+        // on that thread's stack, so it releases the COM objects itself when it unwinds.
+        private volatile bool _releaseOnLoopExit;
         private bool _enabled = true;
         private string _readyState = "live";
         private string _contentHint = "";
@@ -331,6 +334,8 @@ namespace SpawnDev.MultiMedia.Windows
                     _readyState = "ended";
                     OnEnded?.Invoke();
                 }
+                if (_releaseOnLoopExit)
+                    ReleaseResources();
             }
         }
 
@@ -442,6 +447,8 @@ namespace SpawnDev.MultiMedia.Windows
                     _readyState = "ended";
                     OnEnded?.Invoke();
                 }
+                if (_releaseOnLoopExit)
+                    ReleaseResources();
             }
         }
 
@@ -496,8 +503,28 @@ namespace SpawnDev.MultiMedia.Windows
             _disposed = true;
 
             _capturing = false;
+            // Disposed from inside an OnFrame handler - OnFrame is raised on the capture thread, and an
+            // awaiter's continuation (TaskCompletionSource.TrySetResult in the handler) runs inline right
+            // there. Joining our own thread only times out, and releasing the graph here pulled the COM
+            // objects out from under the capture loop still on this stack: "Internal CLR error
+            // (0x80131506)", ~1 run in 6 of VideoCapture_ReceivesFrames (2026-09-23). The loop's finally
+            // releases them once it has unwound.
+            if (_captureThread != null && Thread.CurrentThread == _captureThread)
+            {
+                _releaseOnLoopExit = true;
+                return;
+            }
             _captureThread?.Join(2000);
+            ReleaseResources();
+        }
 
+        /// <summary>
+        /// Releases the Media Foundation / DirectShow objects. Idempotent (each field is nulled). Never
+        /// called while the capture loop can still touch them: from Dispose after the loop has been
+        /// joined, or by the loop itself on exit when Dispose ran on the capture thread.
+        /// </summary>
+        private void ReleaseResources()
+        {
             // MediaFoundation cleanup
             if (_sourceReader != null)
             {

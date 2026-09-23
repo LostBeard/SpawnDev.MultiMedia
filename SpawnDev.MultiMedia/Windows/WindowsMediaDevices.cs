@@ -446,7 +446,10 @@ namespace SpawnDev.MultiMedia.Windows
         /// </summary>
         private static unsafe bool EnumMonikerNext(object enumMoniker, ref IntPtr pMoniker, ref uint fetched)
         {
-            var punk = Marshal.GetIUnknownForObject(enumMoniker);
+            // The IEnumMoniker INTERFACE pointer (QueryInterface), not GetIUnknownForObject's IUnknown identity
+            // pointer: slot 3 of the identity vtable is only Next when IEnumMoniker happens to be the object's
+            // primary interface - otherwise this called some other method with Next's arguments.
+            var punk = Marshal.GetComInterfaceForObject(enumMoniker, typeof(IEnumMoniker));
             try
             {
                 var vtable = Marshal.ReadIntPtr(punk);

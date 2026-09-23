@@ -67,6 +67,54 @@ namespace SpawnDev.MultiMedia.Demo.Shared.UnitTests
         }
 
         /// <summary>
+        /// Disposes the capture from INSIDE an OnFrame handler - OnFrame is raised on the capture thread,
+        /// and a TaskCompletionSource continuation (the ordinary way to await a frame) runs inline right
+        /// there, so this is what a consumer does without meaning to. Windows tracks used to join their own
+        /// thread and release the DirectShow / Media Foundation objects from under the capture loop still on
+        /// that stack: "Internal CLR error (0x80131506)", about 1 run in 6 of VideoCapture_ReceivesFrames.
+        /// Ten rounds, so a regression crashes the process rather than passing by luck.
+        /// </summary>
+        [TestMethod]
+        public async Task VideoCapture_DisposeInsideOnFrame_DoesNotCrash()
+        {
+            var devices = await MediaDevices.EnumerateDevices();
+            if (!devices.Any(d => d.Kind == "videoinput") && !OperatingSystem.IsBrowser())
+                throw new Exception("No video input devices available - cannot test frame capture");
+
+            for (int round = 0; round < 10; round++)
+            {
+                var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Video = true });
+                var track = stream.GetVideoTracks()[0];
+                if (track is not IVideoTrack videoTrack)
+                {
+                    stream.Dispose();
+                    return; // Browser tracks don't implement IVideoTrack (no raw frame access)
+                }
+
+                var disposedInHandler = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                int handled = 0;
+                videoTrack.OnFrame += frame =>
+                {
+                    if (Interlocked.Exchange(ref handled, 1) != 0) return;
+                    var sw = System.Diagnostics.Stopwatch.StartNew();
+                    stream.Dispose(); // on the capture thread, inside the callback
+                    disposedInHandler.TrySetResult(sw.ElapsedMilliseconds < 1000);
+                };
+
+                var completed = await Task.WhenAny(disposedInHandler.Task, Task.Delay(10000));
+                if (completed != disposedInHandler.Task)
+                    throw new Exception($"Round {round}: no video frame within 10 s");
+                if (!await disposedInHandler.Task)
+                    throw new Exception($"Round {round}: Dispose inside OnFrame blocked for 1 s or more (joined its own capture thread?)");
+
+                // Let the capture loop unwind and release the device before the next round opens it again.
+                for (int i = 0; i < 100 && track.ReadyState != "ended"; i++) await Task.Delay(20);
+                if (track.ReadyState != "ended")
+                    throw new Exception($"Round {round}: track still '{track.ReadyState}' 2 s after Dispose inside OnFrame");
+            }
+        }
+
+        /// <summary>
         /// Verifies that the pixel format reported by GetSettings matches the actual frame data size.
         /// </summary>
         [TestMethod]

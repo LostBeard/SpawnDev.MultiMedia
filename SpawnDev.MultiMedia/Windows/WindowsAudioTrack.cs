@@ -18,6 +18,9 @@ namespace SpawnDev.MultiMedia.Windows
         private EventWaitHandle? _captureEvent;
         private volatile bool _capturing;
         private bool _disposed;
+        // Set when Dispose runs ON the capture thread (from an OnFrame handler): the capture loop is still
+        // on that thread's stack, so it releases the native objects itself when it unwinds.
+        private volatile bool _releaseOnLoopExit;
         private bool _enabled = true;
         private string _readyState = "live";
         private string _contentHint = "";
@@ -174,6 +177,8 @@ namespace SpawnDev.MultiMedia.Windows
                     _readyState = "ended";
                     OnEnded?.Invoke();
                 }
+                if (_releaseOnLoopExit)
+                    ReleaseResources();
             }
         }
 
@@ -221,7 +226,26 @@ namespace SpawnDev.MultiMedia.Windows
 
             _capturing = false;
             _captureEvent?.Set(); // Wake up the capture thread
+            // Disposed from inside an OnFrame handler (OnFrame is raised on the capture thread; an awaiter's
+            // continuation runs inline there): joining our own thread only times out, and releasing the
+            // audio client objects here pulls them out from under the capture loop still on this stack. Same bug as
+            // WindowsVideoTrack (Internal CLR error 0x80131506, 2026-09-23). The loop releases them on exit.
+            if (_captureThread != null && Thread.CurrentThread == _captureThread)
+            {
+                _releaseOnLoopExit = true;
+                return;
+            }
             _captureThread?.Join(2000);
+            ReleaseResources();
+        }
+
+        /// <summary>
+        /// Releases the native capture objects. Idempotent (each field is nulled). Never called while the
+        /// capture loop can still touch them: from Dispose after the loop has been joined, or by the loop
+        /// itself on exit when Dispose ran on the capture thread.
+        /// </summary>
+        private void ReleaseResources()
+        {
 
             try { _audioClient?.Stop(); } catch { }
             try { _audioClient?.Reset(); } catch { }
