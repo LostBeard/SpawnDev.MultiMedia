@@ -2,6 +2,10 @@ using Microsoft.Extensions.DependencyInjection;
 using SpawnDev.MultiMedia.DemoConsole.UnitTests;
 using SpawnDev.UnitTesting;
 
+// Capture crash bisection harness (CaptureStress.cs) - runs before any test type or ILGPU is loaded.
+if (args.Length > 0 && args[0] == "capture-stress")
+    return await CaptureStress.Run(args);
+
 // Default: run unit tests
 try
 {
