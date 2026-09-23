@@ -73,7 +73,24 @@ namespace SpawnDev.MultiMedia.Windows
         /// </summary>
         internal static WindowsVideoTrack CreateFromActivate(IMFActivate activate, string label, MediaTrackConstraints? constraints)
         {
+            // Every native object is stored on the track as soon as it exists, so a failure part-way through
+            // (a device that refuses a format, a graph that will not render) releases what was already built
+            // instead of abandoning it - and, once the capture thread is running, stops that thread too.
             var track = new WindowsVideoTrack(label);
+            try
+            {
+                return CreateFromActivateCore(track, activate, constraints);
+            }
+            catch
+            {
+                track.Dispose();
+                throw;
+            }
+        }
+
+        private static WindowsVideoTrack CreateFromActivateCore(WindowsVideoTrack track, IMFActivate activate, MediaTrackConstraints? constraints)
+        {
+            var label = track.Label;
             track._activate = activate;
 
             // Activate the media source
@@ -139,7 +156,24 @@ namespace SpawnDev.MultiMedia.Windows
         /// </summary>
         internal static WindowsVideoTrack CreateFromDirectShowMoniker(object monikerObj, string label, MediaTrackConstraints? constraints)
         {
+            // Every native object is stored on the track as soon as it exists, so a failure part-way through
+            // (a device that refuses a format, a graph that will not render) releases what was already built
+            // instead of abandoning it - and, once the capture thread is running, stops that thread too.
             var track = new WindowsVideoTrack(label);
+            try
+            {
+                return CreateFromDirectShowMonikerCore(track, monikerObj, constraints);
+            }
+            catch
+            {
+                track.Dispose();
+                throw;
+            }
+        }
+
+        private static WindowsVideoTrack CreateFromDirectShowMonikerCore(WindowsVideoTrack track, object monikerObj, MediaTrackConstraints? constraints)
+        {
+            var label = track.Label;
             var moniker = (IMoniker)monikerObj;
 
             // Step 1: Bind moniker to IBaseFilter (the DirectShow source filter)

@@ -15,7 +15,17 @@ namespace SpawnDev.MultiMedia.Browser
             using var navigator = JS.Get<Navigator>("navigator");
             using var mediaDevices = navigator.MediaDevices;
             var jsConstraints = ToJSConstraints(constraints);
-            var stream = await mediaDevices.GetUserMedia(jsConstraints);
+            MediaStream? stream;
+            try
+            {
+                stream = await mediaDevices.GetUserMedia(jsConstraints);
+            }
+            catch (JSException ex)
+            {
+                // Same exception type as the desktop implementation; the DOMException name (NotAllowedError,
+                // NotFoundError, NotReadableError, OverconstrainedError ...) is kept as Name.
+                throw new MediaDeviceException(string.IsNullOrEmpty(ex.Name) ? "Error" : ex.Name, ex.Message, null, ex);
+            }
             if (stream == null) throw new InvalidOperationException("getUserMedia returned null.");
             return new BrowserMediaStream(stream);
         }
@@ -26,14 +36,21 @@ namespace SpawnDev.MultiMedia.Browser
             using var navigator = JS.Get<Navigator>("navigator");
             using var mediaDevices = navigator.MediaDevices;
             MediaStream? stream;
-            if (constraints != null)
+            try
             {
-                var jsConstraints = ToJSConstraints(constraints);
-                stream = await mediaDevices.GetDisplayMedia(jsConstraints);
+                if (constraints != null)
+                {
+                    var jsConstraints = ToJSConstraints(constraints);
+                    stream = await mediaDevices.GetDisplayMedia(jsConstraints);
+                }
+                else
+                {
+                    stream = await mediaDevices.GetDisplayMedia();
+                }
             }
-            else
+            catch (JSException ex)
             {
-                stream = await mediaDevices.GetDisplayMedia();
+                throw new MediaDeviceException(string.IsNullOrEmpty(ex.Name) ? "Error" : ex.Name, ex.Message, "video", ex);
             }
             if (stream == null) throw new InvalidOperationException("getDisplayMedia returned null.");
             return new BrowserMediaStream(stream);
@@ -88,7 +105,9 @@ namespace SpawnDev.MultiMedia.Browser
             if (c.EchoCancellation.HasValue) jsc.EchoCancellation = c.EchoCancellation.Value;
             if (c.NoiseSuppression.HasValue) jsc.NoiseSuppression = c.NoiseSuppression.Value;
             if (c.AutoGainControl.HasValue) jsc.AutoGainControl = c.AutoGainControl.Value;
-            if (c.DeviceId != null) jsc.DeviceId = c.DeviceId;
+            // EXACT, like the desktop implementation: a bare string is only a preference to the browser, so an
+            // unknown or unplugged DeviceId silently opened a different camera instead of failing.
+            if (c.DeviceId != null) jsc.DeviceId = new ConstrainDOMStringParameters { Exact = c.DeviceId };
             return jsc;
         }
     }

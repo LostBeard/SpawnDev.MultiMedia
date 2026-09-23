@@ -1,5 +1,41 @@
 # Changelog
 
+## Unreleased (2026-09-23)
+
+### Changed - GetUserMedia failures now THROW on desktop and in the browser
+
+- **New `MediaDeviceException`** (`Name`, `Kind`, `InnerException`). `Name` follows the web's DOMException
+  names: `NotFoundError` (no such device / no device of that kind), `NotReadableError` (the device exists
+  but could not be opened), plus whatever the browser reports (`NotAllowedError`, `OverconstrainedError`).
+- **Desktop used to swallow the failure.** A capture that failed to open was written to Debug output and
+  `GetUserMedia` returned a stub "No Camera Found" / "No Audio Input Found" track, so a caller could not
+  tell a missing camera from a working one. It now throws, keeping the real cause as `InnerException`
+  (an `AggregateException` when several devices were tried). Video tries Media Foundation then
+  DirectShow per device and falls through to the next device before giving up; tracks already opened by
+  the same call are disposed when a later one fails. `GetDisplayMedia` failures are `NotReadableError`.
+- **The browser now throws the same type.** A rejected `getUserMedia` / `getDisplayMedia` is rethrown as
+  `MediaDeviceException` with the JS error name (needs SpawnDev.SpawnJS 2.1.18, which keeps the name).
+- **`DeviceId` is exact on both platforms.** The browser passed it as a preference and silently opened a
+  different device; it is now `{ exact: id }`, matching desktop.
+- **A half-built video track is released.** `WindowsVideoTrack.CreateFromActivate` /
+  `CreateFromDirectShowMoniker` dispose the track (graph, reader, capture thread) if setup fails part way.
+
+### Tests
+
+- `GetUserMedia_UnknownVideoDeviceId_ThrowsMediaDeviceException`,
+  `GetUserMedia_UnknownAudioDeviceId_ThrowsMediaDeviceException` - pass on desktop and in the Wasm lane.
+- PlaywrightMultiTest: a desktop test process that dies without reporting now fails with its exit code and
+  last output (it said only "Test run failed"), and a `PMT_FILTER` / `PMT_LANES` scope that selects no
+  tests fails instead of reporting "Passed!". `PMT_LANES` matches test class names
+  (`DesktopMultiMediaTests`, `WasmMultiMediaTests`).
+
+### Known issue
+
+- Intermittent desktop crash (access violation, "Internal CLR error 0x80131506") in video-capture tests
+  when the first camera is a Meta Quest Link virtual camera: its DirectShow filter corrupts the process
+  under GC activity (Meta Quest 3/3S/2/Pro crash every stress run; OBS Virtual Camera 0 of 160 sessions).
+  The desktop tests open the first video device.
+
 ## 0.2.0 (2026-04-25 stable)
 
 First minor cut since 0.1.0. Bundles Phase 4b (H.264 encoder), Phase 4a WebRTC cross-link polish, partial Linux device enumeration, IAudioPlayer test coverage, and a DI registration helper. Browser + Windows desktop remain feature-complete for capture / playback / conversion; Linux enumeration is live; Linux capture (`GetUserMedia`/`GetDisplayMedia`) and macOS remain documented gaps.

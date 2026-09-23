@@ -24,107 +24,27 @@ namespace SpawnDev.MultiMedia.Windows
             }
         }
 
+        /// <summary>
+        /// Opens the requested devices. Throws <see cref="MediaDeviceException"/> - like the browser's
+        /// getUserMedia rejects - when a requested kind has no device (NotFoundError) or no device of that
+        /// kind could be opened (NotReadableError, with the real failure as the inner exception). It used to
+        /// swallow the failure into Debug output and hand back a stub "No Camera Found" track.
+        /// </summary>
         public static Task<IMediaStream> GetUserMedia(MediaStreamConstraints constraints)
         {
             var tracks = new List<IMediaStreamTrack>();
-
-            if (constraints.Video?.IsRequested == true)
+            try
             {
-                EnsureMFInitialized();
-                var videoConstraints = constraints.Video.Constraints;
-                string? requestedDeviceId = videoConstraints?.DeviceId;
-
-                IMediaStreamTrack? videoTrack = null;
-
-                // Try MediaFoundation first (hardware cameras)
-                var mfDevices = EnumerateVideoDeviceActivates();
-                foreach (var (activate, label, symbolicLink) in mfDevices)
-                {
-                    if (videoTrack != null || (requestedDeviceId != null && symbolicLink != requestedDeviceId))
-                    {
-                        Marshal.ReleaseComObject(activate);
-                        continue;
-                    }
-                    videoTrack = WindowsVideoTrack.CreateFromActivate(activate, label, videoConstraints);
-                }
-
-                // If MF had no match, try DirectShow (virtual cameras like OBS)
-                if (videoTrack == null)
-                {
-                    var dshowDevices = EnumerateDirectShowVideoDevices();
-                    System.Diagnostics.Debug.WriteLine($"DShow devices for capture: {dshowDevices.Length}");
-                    foreach (var (label, devicePath, moniker) in dshowDevices)
-                    {
-                        if (videoTrack != null || (requestedDeviceId != null && devicePath != requestedDeviceId))
-                        {
-                            if (moniker != null) Marshal.ReleaseComObject(moniker);
-                            continue;
-                        }
-                        if (moniker != null)
-                        {
-                            try
-                            {
-                                videoTrack = WindowsVideoTrack.CreateFromDirectShowMoniker(moniker, label, videoConstraints);
-                            }
-                            catch (Exception ex)
-                            {
-                                System.Diagnostics.Debug.WriteLine($"DirectShow capture failed for '{label}': {ex.Message}");
-                                try { Marshal.ReleaseComObject(moniker); } catch { }
-                            }
-                        }
-                    }
-                }
-
-                if (videoTrack != null)
-                    tracks.Add(videoTrack);
-                else
-                    tracks.Add(new WindowsMediaStreamTrack(Guid.NewGuid().ToString(), "video", "No Camera Found"));
+                if (constraints.Video?.IsRequested == true)
+                    tracks.Add(OpenVideoTrack(constraints.Video.Constraints));
+                if (constraints.Audio?.IsRequested == true)
+                    tracks.Add(OpenAudioTrack(constraints.Audio.Constraints));
             }
-
-            if (constraints.Audio?.IsRequested == true)
+            catch
             {
-                var audioConstraints = constraints.Audio.Constraints;
-                var audioDevices = EnumerateAudioEndpoints(EDataFlow.eCapture);
-                if (audioDevices.Length > 0)
-                {
-                    string? requestedDeviceId = audioConstraints?.DeviceId;
-
-                    IMMDevice? selectedDevice = null;
-                    string selectedLabel = "Audio Input";
-
-                    foreach (var (device, label, deviceId) in audioDevices)
-                    {
-                        if (requestedDeviceId != null && deviceId != requestedDeviceId)
-                        {
-                            Marshal.ReleaseComObject(device);
-                            continue;
-                        }
-                        selectedDevice = device;
-                        selectedLabel = label;
-                        break;
-                    }
-
-                    // Release any we didn't pick
-                    foreach (var (device, _, _) in audioDevices)
-                    {
-                        if (!ReferenceEquals(device, selectedDevice))
-                            Marshal.ReleaseComObject(device);
-                    }
-
-                    if (selectedDevice != null)
-                    {
-                        var track = WindowsAudioTrack.CreateFromDevice(selectedDevice, selectedLabel);
-                        tracks.Add(track);
-                    }
-                }
-                else
-                {
-                    // No mics found - return stub track for test compatibility
-                    tracks.Add(new WindowsMediaStreamTrack(
-                        id: Guid.NewGuid().ToString(),
-                        kind: "audio",
-                        label: "No Audio Input Found"));
-                }
+                // A track opened before a later one failed must not keep its device.
+                foreach (var t in tracks) { try { t.Dispose(); } catch { } }
+                throw;
             }
 
             if (tracks.Count == 0)
@@ -134,10 +54,123 @@ namespace SpawnDev.MultiMedia.Windows
             return Task.FromResult(stream);
         }
 
+        private static IMediaStreamTrack OpenVideoTrack(MediaTrackConstraints? videoConstraints)
+        {
+            EnsureMFInitialized();
+            string? requestedDeviceId = videoConstraints?.DeviceId;
+            IMediaStreamTrack? videoTrack = null;
+            var failures = new List<Exception>();
+            int candidates = 0;
+
+            // Try MediaFoundation first (hardware cameras). A device that fails to open is recorded and the
+            // next candidate is tried; if none opens, every failure goes into the thrown exception.
+            var mfDevices = EnumerateVideoDeviceActivates();
+            foreach (var (activate, label, symbolicLink) in mfDevices)
+            {
+                if (videoTrack != null || (requestedDeviceId != null && symbolicLink != requestedDeviceId))
+                {
+                    Marshal.ReleaseComObject(activate);
+                    continue;
+                }
+                candidates++;
+                try
+                {
+                    videoTrack = WindowsVideoTrack.CreateFromActivate(activate, label, videoConstraints);
+                }
+                catch (Exception ex)
+                {
+                    failures.Add(new InvalidOperationException($"MediaFoundation could not open '{label}': {ex.Message}", ex));
+                    try { Marshal.ReleaseComObject(activate); } catch { }
+                }
+            }
+
+            // If MF had no match, try DirectShow (virtual cameras like OBS)
+            if (videoTrack == null)
+            {
+                var dshowDevices = EnumerateDirectShowVideoDevices();
+                foreach (var (label, devicePath, moniker) in dshowDevices)
+                {
+                    if (videoTrack != null || (requestedDeviceId != null && devicePath != requestedDeviceId))
+                    {
+                        if (moniker != null) Marshal.ReleaseComObject(moniker);
+                        continue;
+                    }
+                    if (moniker == null) continue;
+                    candidates++;
+                    try
+                    {
+                        videoTrack = WindowsVideoTrack.CreateFromDirectShowMoniker(moniker, label, videoConstraints);
+                    }
+                    catch (Exception ex)
+                    {
+                        failures.Add(new InvalidOperationException($"DirectShow could not open '{label}': {ex.Message}", ex));
+                        try { Marshal.ReleaseComObject(moniker); } catch { }
+                    }
+                }
+            }
+
+            if (videoTrack != null) return videoTrack;
+            if (candidates == 0)
+                throw new MediaDeviceException(MediaDeviceException.NotFoundError,
+                    requestedDeviceId != null ? $"No video input device with DeviceId '{requestedDeviceId}'." : "No video input device found.",
+                    "video");
+            throw new MediaDeviceException(MediaDeviceException.NotReadableError,
+                $"No video input device could be opened ({string.Join("; ", failures.Select(f => f.Message))})",
+                "video", failures.Count == 1 ? failures[0] : new AggregateException(failures));
+        }
+
+        private static IMediaStreamTrack OpenAudioTrack(MediaTrackConstraints? audioConstraints)
+        {
+            string? requestedDeviceId = audioConstraints?.DeviceId;
+            var audioDevices = EnumerateAudioEndpoints(EDataFlow.eCapture);
+
+            IMMDevice? selectedDevice = null;
+            string selectedLabel = "Audio Input";
+            foreach (var (device, label, deviceId) in audioDevices)
+            {
+                if (selectedDevice != null || (requestedDeviceId != null && deviceId != requestedDeviceId)) continue;
+                selectedDevice = device;
+                selectedLabel = label;
+            }
+            // Release any we didn't pick
+            foreach (var (device, _, _) in audioDevices)
+            {
+                if (!ReferenceEquals(device, selectedDevice))
+                    Marshal.ReleaseComObject(device);
+            }
+
+            if (selectedDevice == null)
+                throw new MediaDeviceException(MediaDeviceException.NotFoundError,
+                    requestedDeviceId != null ? $"No audio input device with DeviceId '{requestedDeviceId}'." : "No audio input device found.",
+                    "audio");
+            try
+            {
+                return WindowsAudioTrack.CreateFromDevice(selectedDevice, selectedLabel);
+            }
+            catch (Exception ex)
+            {
+                throw new MediaDeviceException(MediaDeviceException.NotReadableError,
+                    $"Audio input '{selectedLabel}' could not be opened: {ex.Message}", "audio", ex);
+            }
+        }
+
+        /// <summary>
+        /// Opens the screen capture. Throws <see cref="MediaDeviceException"/> (NotReadableError, real failure
+        /// as the inner exception) when desktop duplication cannot be started, like the browser rejects.
+        /// </summary>
         public static Task<IMediaStream> GetDisplayMedia(MediaStreamConstraints? constraints)
         {
             var videoConstraints = constraints?.Video?.Constraints;
-            var track = WindowsDisplayTrack.Create(videoConstraints);
+            IMediaStreamTrack track;
+            try
+            {
+                track = WindowsDisplayTrack.Create(videoConstraints);
+            }
+            catch (Exception ex) when (ex is not MediaDeviceException)
+            {
+                throw new MediaDeviceException(MediaDeviceException.NotReadableError,
+                    $"Screen capture could not be started: {ex.Message}", "video", ex);
+            }
             IMediaStream stream = new WindowsMediaStream(new IMediaStreamTrack[] { track });
             return Task.FromResult(stream);
         }
