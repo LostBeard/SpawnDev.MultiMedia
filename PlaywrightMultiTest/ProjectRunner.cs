@@ -27,6 +27,84 @@ namespace PlaywrightMultiTest
         /// </summary>
         private ProjectRunner() { }
 
+        /// <summary>
+        /// Chromium launch args. When PMT_DAWN_DUMP=1, also enable Dawn's dump_shaders toggle so
+        /// Chrome's WGSL compiler (Tint) emits the translated backend shader (HLSL on D3D12 / SPIR-V
+        /// on Vulkan) AND the input WGSL to the Chrome log; disable_symbol_renaming keeps our v_NNN
+        /// names so the dump is greppable. The log is written to a file via --log-file so we can read
+        /// Tint's actual output and see where it diverges from the WGSL we emit (e.g. the bf16 radix
+        /// ordering-transform miscompile). Off by default — debug-only, no effect on normal runs.
+        /// </summary>
+        private static string[] BuildChromiumArgs()
+        {
+            var args = new System.Collections.Generic.List<string>
+            {
+                "--enable-unsafe-webgpu",
+                // NO "Vulkan" here: forcing Chromium's Vulkan feature on Windows pushed Dawn off its
+                // native D3D12 path and the browser silently fell back to the SwiftShader SOFTWARE
+                // WebGPU adapter (vendor=google arch=swiftshader isFallbackAdapter=true - caught by
+                // the ML repo's WebGPU_AdapterIdentity_Probe 2026-07-03, confirmed here by Captain).
+                // Every WebGPU perf number measured before this fix was CPU-software-rasterizer time.
+                "--enable-features=WebGPUService,SkiaGraphite,FileSystemAccessPersistentPermission",
+                "--ignore-gpu-blocklist",
+                // Fail loudly rather than silently falling back to SwiftShader again.
+                "--disable-software-rasterizer",
+                // Unquantized GPU timestamps for 'timestamp-query' (Chrome otherwise rounds to
+                // 100us, which zeroes most per-pass durations in kernel attribution).
+                "--enable-webgpu-developer-features",
+                "--no-sandbox",
+                "--disable-features=FileSystemAccessPermissionPrompt",
+                "--allow-file-access-from-files",
+                // Fake media devices for testing (no real camera/mic needed)
+                "--use-fake-device-for-media-stream",
+                "--use-fake-ui-for-media-stream"
+            };
+            // Expose a TCP CDP endpoint so a run can be inspected WHILE it executes (live JS eval:
+            // interop slot-table census, heap stats, console capture, screenshots).
+            //
+            // Playwright drives this browser over --remote-debugging-pipe (inherited stdio handles
+            // owned by the testhost). A pipe admits exactly ONE client and cannot be joined, and Chrome
+            // cannot have the port enabled after launch - so WITHOUT this flag an in-flight PMT run is
+            // completely opaque to external tooling, and diagnosing a leak means throwing the run away
+            // and re-running under a hand-rolled browser (which then is NOT what PMT actually tests).
+            // Adding the port is additive: Playwright keeps using its pipe either way.
+            //
+            // PMT_CDP_PORT=off (or 0) disables. Default 9223 - deliberately NOT 9222, so this never
+            // collides with a hand-launched debug Chrome on the standard port.
+            var cdpPort = Environment.GetEnvironmentVariable("PMT_CDP_PORT");
+            if (!string.Equals(cdpPort, "off", StringComparison.OrdinalIgnoreCase) && cdpPort != "0")
+            {
+                var port = int.TryParse(cdpPort, out var p) ? p : 9223;
+                args.Add($"--remote-debugging-port={port}");
+                LogStatus($"[PMT_CDP] DevTools endpoint on http://127.0.0.1:{port} (PMT_CDP_PORT=off to disable)");
+            }
+            // PMT_DAWN_FEATURES=<toggle>[,<toggle>...] enables Dawn toggles for the run (e.g. use_dxc,
+            // to compare the D3D12 shader compilers). Chrome honours only ONE --enable-dawn-features
+            // switch, so these merge with PMT_DAWN_DUMP's toggles.
+            var dawnFeatures = new System.Collections.Generic.List<string>();
+            var extraDawn = Environment.GetEnvironmentVariable("PMT_DAWN_FEATURES");
+            if (!string.IsNullOrWhiteSpace(extraDawn))
+            {
+                dawnFeatures.AddRange(extraDawn.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+                LogStatus($"[PMT_DAWN_FEATURES] {extraDawn}");
+            }
+            if (Environment.GetEnvironmentVariable("PMT_DAWN_DUMP") == "1")
+            {
+                var logFile = Environment.GetEnvironmentVariable("PMT_DAWN_LOG")
+                    ?? Path.Combine(Path.GetTempPath(), "chrome_dawn_dump.log");
+                try { if (File.Exists(logFile)) File.Delete(logFile); } catch { }
+                dawnFeatures.Add("dump_shaders");
+                dawnFeatures.Add("disable_symbol_renaming");
+                args.Add("--enable-logging");
+                args.Add($"--log-file={logFile}");
+                args.Add("--v=1");
+                LogStatus($"[PMT_DAWN_DUMP] Tint shader dump ON -> {logFile}");
+            }
+            if (dawnFeatures.Count > 0)
+                args.Add($"--enable-dawn-features={string.Join(",", dawnFeatures)}");
+            return args.ToArray();
+        }
+
         private static async Task<int> RunDotnetAsync(string args, string workingDir, int timeoutMs = 300000)
         {
             LogStatus($"RunDotnetAsync: dotnet {args.Split(' ')[0]} (timeout={timeoutMs/1000}s)");
@@ -109,6 +187,19 @@ namespace PlaywrightMultiTest
                     }
                 }
             }
+            // `dotnet test --filter` is consumed by the NUnit adapter, NOT passed to this
+            // testhost as a process arg — so PMT enumerates the FULL set and NUnit selects
+            // cases afterwards. That was fine when RunTest executed per case, but the parallel
+            // scheduler runs the enumerated set up-front in StartUp, so an unscoped enumeration
+            // would run everything. PMT_FILTER (substring match, this testhost CAN read it) lets
+            // dev runs scope the scheduled set: e.g. `PMT_FILTER=VectorAddTest dotnet test ...`.
+            filter ??= Environment.GetEnvironmentVariable("PMT_FILTER");
+            if (!string.IsNullOrEmpty(filter)) LogStatus($"Test filter active: '{filter}' (substring match)");
+
+            // Backend scoping, independent of the name filter - see LaneFilter().
+            var laneFilter = LaneFilter();
+            if (laneFilter != null)
+                LogStatus($"PMT_LANES active: only [{string.Join(", ", laneFilter)}] lanes are scheduled.");
 
 
             LogStatus("Discovering projects...");
@@ -130,9 +221,12 @@ namespace PlaywrightMultiTest
 
                     var indexPath = Path.Combine(testableProject.ProjectDetails.WwwRoot, "index.html");
 
-                    // build a publish version of the app for testing
+                    // build a publish version of the app for testing.
+                    // -p:BuildInParallel=false + -maxcpucount:1 keep the publish single-threaded so
+                    // MSBuild worker nodes do not crash with MSB4166 ("Child node exited prematurely")
+                    // when other crew (Riker / Tuvok) are running their own PMT sweeps in parallel.
                     LogStatus($"Publishing {project.Name}...");
-                    var pubResult = await RunDotnetAsync($"publish \"{project.CsprojPath}\" -c Release", project.Directory).ConfigureAwait(false);
+                    var pubResult = await RunDotnetAsync($"publish \"{project.CsprojPath}\" -c Release -p:BuildInParallel=false -maxcpucount:1", project.Directory).ConfigureAwait(false);
                     LogStatus($"Publish {project.Name}: exit={pubResult}");
                     if (pubResult != 0 || !File.Exists(indexPath))
                     {
@@ -174,71 +268,96 @@ namespace PlaywrightMultiTest
                             new BrowserTypeLaunchPersistentContextOptions
                             {
                                 Headless = false,
-                                Args = new[]
+                                // Installed Chrome by DEFAULT, not Playwright's bundled Chromium: the
+                                // bundled build only ever exposes the SwiftShader SOFTWARE WebGPU
+                                // adapter on this machine (vendor=google arch=swiftshader
+                                // isFallbackAdapter=true; fresh profile + ignore-blocklist made no
+                                // difference) - every WebGPU perf number before 2026-07-03 was
+                                // CPU-rasterizer time. Real Chrome exposes the hardware adapter (and is
+                                // what users run anyway). PMT_BROWSER_CHANNEL still overrides (set it
+                                // to "bundled" to deliberately run the bundled Chromium, e.g. as a
+                                // V8-version discriminator for engine-level wasm issues).
+                                Channel = Environment.GetEnvironmentVariable("PMT_BROWSER_CHANNEL") switch
                                 {
-                                    "--enable-unsafe-webgpu",
-                                    "--enable-features=Vulkan,WebGPUService,SkiaGraphite,FileSystemAccessPersistentPermission",
-                                    "--ignore-gpu-blocklist",
-                                    "--no-sandbox",
-                                    // Auto-grant file system write permission (no prompt)
-                                    "--disable-features=FileSystemAccessPermissionPrompt",
-                                    "--allow-file-access-from-files",
-                                    // Fake media devices for testing (no real camera/mic needed)
-                                    "--use-fake-device-for-media-stream",
-                                    "--use-fake-ui-for-media-stream"
-                                }
+                                    "bundled" => null,
+                                    string s => s,
+                                    null => "chrome",
+                                },
+                                Args = BuildChromiumArgs()
                             }).ConfigureAwait(false);
                         testableProject.Browser = testableProject.BrowserContext.Browser;
                         // Grant all available permissions to avoid prompts
                         await testableProject.BrowserContext.GrantPermissionsAsync(
                             new[] { "clipboard-read", "clipboard-write", "camera", "microphone" }).ConfigureAwait(false);
-                        // new page
-                        testableProject.Page = await testableProject.BrowserContext.NewPageAsync().ConfigureAwait(false);
-
                         // Temporary: capture browser console output containing WGSL dumps to a log file
                         var wgslDumpDir = Path.Combine(project.Directory, "..", "PlaywrightMultiTest", "WGSLDumps");
                         Directory.CreateDirectory(wgslDumpDir);
                         var consoleLogPath = Path.Combine(wgslDumpDir, "browser_console.log");
                         File.WriteAllText(consoleLogPath, ""); // clear previous log
                         var wasmDumpChunks = new System.Collections.Generic.List<string>();
-                        testableProject.Page.Console += (_, msg) =>
+
+                        void HookPageConsole(Microsoft.Playwright.IPage page, string label)
                         {
-                            var text = msg.Text;
-                            // Capture Wasm binary dumps: collect base64 chunks and write to disk
-                            if (text.StartsWith("[Wasm_DUMP]"))
+                            page.Console += (_, msg) =>
                             {
-                                wasmDumpChunks.Add(text.Substring("[Wasm_DUMP]".Length));
-                            }
-                            else if (text.StartsWith("[Wasm_DUMP_END]") && wasmDumpChunks.Count > 0)
-                            {
-                                try
+                                var text = msg.Text;
+                                // Capture Wasm binary dumps: collect base64 chunks and write to disk
+                                if (text.StartsWith("[Wasm_DUMP]"))
                                 {
-                                    var b64 = string.Join("", wasmDumpChunks);
-                                    var bytes = Convert.FromBase64String(b64);
-                                    var wasmPath = Path.Combine(wgslDumpDir, $"wasm_dump_{DateTime.Now:HHmmss}.wasm");
-                                    File.WriteAllBytes(wasmPath, bytes);
-                                    LogStatus($"Wasm binary dumped: {wasmPath} ({bytes.Length} bytes)");
+                                    wasmDumpChunks.Add(text.Substring("[Wasm_DUMP]".Length));
                                 }
-                                catch (Exception ex) { LogStatus($"Wasm dump failed: {ex.Message}"); }
-                                wasmDumpChunks.Clear();
-                            }
-                            else if (text.StartsWith("[Wasm_DUMP_START]"))
-                            {
-                                wasmDumpChunks.Clear();
-                            }
-                            // Only log messages related to WGSL dumps, Wasm worker traces, or errors
-                            if (text.Contains("WGSL") || text.Contains("@compute") || text.Contains("@workgroup_size") || text.Contains("WGSL_DUMP") || text.Contains("GLSL_DUMP") || text.Contains("[WasmWorker]") || text.Contains("[Wasm") || text.Contains("CONV2D_TRACE") || text.Contains("TEX_UNIT") || text.Contains("PREPROCESS_TRACE") || text.Contains("LAYER_TRACE") || text.Contains("LOGITS_TRACE") || text.Contains("CPU_LOGITS") || text.Contains("DISP_TRACE") || text.Contains("TF_OFFSET") || msg.Type == "error")
-                            {
-                                try
+                                else if (text.StartsWith("[Wasm_DUMP_END]") && wasmDumpChunks.Count > 0)
                                 {
-                                    File.AppendAllText(consoleLogPath, $"[{msg.Type}] {text}\n---END_MSG---\n");
+                                    try
+                                    {
+                                        var b64 = string.Join("", wasmDumpChunks);
+                                        var bytes = Convert.FromBase64String(b64);
+                                        var wasmPath = Path.Combine(wgslDumpDir, $"wasm_dump_{DateTime.Now:HHmmss}.wasm");
+                                        File.WriteAllBytes(wasmPath, bytes);
+                                        LogStatus($"Wasm binary dumped: {wasmPath} ({bytes.Length} bytes)");
+                                    }
+                                    catch (Exception ex) { LogStatus($"Wasm dump failed: {ex.Message}"); }
+                                    wasmDumpChunks.Clear();
                                 }
-                                catch { }
-                            }
+                                else if (text.StartsWith("[Wasm_DUMP_START]"))
+                                {
+                                    wasmDumpChunks.Clear();
+                                }
+                                // Log WGSL/Wasm traces, errors, and P2P-layer diagnostic lines so
+                                // multi-popup WebRTC flows (P2P two-tab test) leave a trail for
+                                // offline diagnosis.
+                                if (text.Contains("WGSL") || text.Contains("@compute") || text.Contains("@workgroup_size") || text.Contains("WGSL_DUMP") || text.Contains("GLSL_DUMP") || text.Contains("[WasmWorker]") || text.Contains("[Wasm") || text.Contains("CONV2D_TRACE") || text.Contains("TEX_UNIT") || text.Contains("PREPROCESS_TRACE") || text.Contains("LAYER_TRACE") || text.Contains("LOGITS_TRACE") || text.Contains("CPU_LOGITS") || text.Contains("DISP_TRACE") || text.Contains("TF_OFFSET") || text.Contains("[Peer]") || text.Contains("[RtcPeer]") || text.Contains("[sd_compute]") || text.Contains("[P2PCompute") || text.Contains("[P2P ") || text.Contains("[Torrent") || msg.Type == "error")
+                                {
+                                    try
+                                    {
+                                        File.AppendAllText(consoleLogPath, $"[{label}][{msg.Type}] {text}\n---END_MSG---\n");
+                                    }
+                                    catch { }
+                                }
+                            };
+                        }
+
+                        // Hook console on any popup/new page created by window.open so tests that
+                        // drive multi-window flows (P2P two-popup test) capture diagnostics from
+                        // every popup, not just the test-driver page.
+                        testableProject.BrowserContext.Page += (_, newPage) =>
+                        {
+                            try { HookPageConsole(newPage, newPage.Url); } catch { }
                         };
+
+                        // new page
+                        testableProject.Page = await testableProject.BrowserContext.NewPageAsync().ConfigureAwait(false);
+                        HookPageConsole(testableProject.Page, "main");
 
                         // go to the app's unit tests page.
                         var testPageUrl = new Uri(new Uri(baseUrl), testableProject.TestPage).ToString();
+                        // Stage-3d dual-mode CI: PMT_WASM_SIMD=off appends ?wasmsimd=off so the app forces
+                        // the Wasm SCALAR path for the whole sweep (scalar-mode cross-mode oracle on SIMD HW).
+                        if (string.Equals(Environment.GetEnvironmentVariable("PMT_WASM_SIMD"), "off", StringComparison.OrdinalIgnoreCase))
+                        {
+                            testPageUrl += (testPageUrl.Contains('?') ? "&" : "?") + "wasmsimd=off";
+                            LogStatus("PMT_WASM_SIMD=off -> forcing scalar Wasm path for this sweep");
+                        }
                         LogStatus($"Navigating to {testPageUrl}...");
                         await testableProject.Page.GotoAsync(testPageUrl).ConfigureAwait(false);
                         LogStatus("Page loaded, waiting for test table...");
@@ -247,15 +366,14 @@ namespace PlaywrightMultiTest
                         await testableProject.Page.WaitForSelectorAsync("table.unit-test-ready", new() { Timeout = 30000 }).ConfigureAwait(false);
                         LogStatus("Test table ready");
 
-                        // get the table
-                        var table = testableProject.Page.Locator("table.unit-test-view");
-
-                        // Enumerate test rows via a single Page.EvaluateAsync round-trip
-                        // instead of one IPC per cell. With ~1000+ rows the per-row
-                        // approach took 2-5 minutes of dead time after page render;
-                        // batch scrape collapses that to sub-second. Per Tuvok's
-                        // 2026-04-25 PMT-enumeration-speedup DevComms.
-                        var rowsJson = await testableProject.Page.EvaluateAsync<JsonElement>(@"() => {
+                        // Enumerate test rows via a single browser-side JS evaluation
+                        // instead of one-IPC-per-row. With ~5000+ rows on the multi-
+                        // backend ILGPU matrix the per-row round-trip pattern was
+                        // burning multiple minutes of dead time after the page rendered
+                        // but before the first test ran. Cribbed from Tuvok's
+                        // tuvok-to-team-pmt-enumeration-speedup-2026-04-25.md (Codecs
+                        // commit f16b27b). Same semantics, ~7000x fewer IPC calls.
+                        var rowsJson = await testableProject.Page.EvaluateAsync<System.Text.Json.JsonElement>(@"() => {
                             const rows = document.querySelectorAll('table.unit-test-view tbody tr');
                             return Array.from(rows).map(r => ({
                                 typeName: r.querySelector('.test-type-name')?.textContent ?? '',
@@ -269,15 +387,18 @@ namespace PlaywrightMultiTest
                             var row = rowsJson[i];
                             var typeName = row.GetProperty("typeName").GetString() ?? "";
                             var methodName = row.GetProperty("methodName").GetString() ?? "";
-
                             var rowTest = new ProjectTest(testableProject, typeName, methodName, testPageUrl);
 
-                            if (filter != null)
+                            // Backend scoping (PMT_LANES) - applied like the name filter, before the
+                            // test is ever scheduled.
+                            if (!MatchesLane(laneFilter, typeName))
                             {
-                                if (rowTest.Name != filter && rowTest.TestTypeName != filter && rowTest.TestMethodName != filter)
-                                {
-                                    continue;
-                                }
+                                continue;
+                            }
+
+                            if (filter != null && !MatchesFilter(filter, rowTest))
+                            {
+                                continue;
                             }
 
                             testableProject.Tests.Add(rowTest);
@@ -288,6 +409,11 @@ namespace PlaywrightMultiTest
                     catch (Exception ex)
                     {
                         LogStatus($"Error initializing {project.Name}: {ex.Message}");
+                        // ⚠️ FAIL THE RUN. This catch used to only log, so a browser that closed on launch
+                        // (the bundled Chromium under --disable-software-rasterizer does) dropped EVERY
+                        // browser test and the sweep still reported Passed. Found 2026-09-23 red-checking
+                        // the WebGPU adapter probe in SpawnDev.VoxelEngine.
+                        buildTest.SetError($"{project.Name} failed to initialize - none of its browser tests ran: {ex.Message}");
                     }
                 }
                 else if (project.AppProjectType == ProjectType.Exe)
@@ -303,9 +429,10 @@ namespace PlaywrightMultiTest
                     var buildTest = new ProjectTest(testableProject, $"Build {project.Name}");
                     testableProject.Tests.Add(buildTest);
 
-                    // build a publish version of the app for testing
+                    // build a publish version of the app for testing.
+                    // Same MSBuild-worker resilience as the Blazor branch above.
                     LogStatus($"Publishing {project.Name}...");
-                    var pubResult = await RunDotnetAsync($"publish \"{project.CsprojPath}\" -c Release", project.Directory).ConfigureAwait(false);
+                    var pubResult = await RunDotnetAsync($"publish \"{project.CsprojPath}\" -c Release -p:BuildInParallel=false -maxcpucount:1", project.Directory).ConfigureAwait(false);
                     LogStatus($"Publish {project.Name}: exit={pubResult}");
                     var publishedBinary = project.ExistingPublishBinary;
                     if (pubResult != 0 || string.IsNullOrEmpty(publishedBinary))
@@ -325,22 +452,44 @@ namespace PlaywrightMultiTest
                         // get test type name
                         var typeName = test.Split(".")[0];
 
-                        // get test method name
-                        var methodName = test.Split(".")[1];
+                        // get test method name — skip lines where the method part is empty (e.g.
+                        // console output from initialization code like "[LocalTracker] foo..." that
+                        // ends with a dot but has no real method name after it)
+                        var parts = test.Split(".");
+                        var methodName = parts.Length >= 2 ? parts[1] : "";
+                        if (string.IsNullOrWhiteSpace(methodName)) continue;
 
                         var rowTest = new ProjectTest(testableProject, typeName!, methodName!);
-                        if (filter != null)
+
+                        // ⚠️ THE SECOND ENUMERATION SITE. PMT_LANES was first applied only at the
+                        // browser site; the desktop lane then still ran unfiltered, which looks exactly
+                        // like the filter not working.
+                        if (!MatchesLane(laneFilter, typeName))
                         {
-                            if (rowTest.Name != filter && rowTest.TestTypeName != filter && rowTest.TestMethodName != filter)
-                            {
-                                continue;
-                            }
+                            continue;
+                        }
+
+                        if (filter != null && !MatchesFilter(filter, rowTest))
+                        {
+                            continue;
                         }
                         testableProject.Tests.Add(rowTest);
 
                         rowTest.TestFunc = async (page) =>
                         {
-                            var result = await ProcessRunner.Run(publishedBinary, rowTest.Name, timeout: 120_000).ConfigureAwait(false);
+                            // Subprocess timeout: 10 minutes covers every test that ships with the
+                            // demo today plus 1-2 retries inside the subprocess. The slower P2P /
+                            // WebRTC paths take 135-260s standalone (LargeBuffer_1MB / 10MB) and
+                            // their TestMethod attributes specify 180s / 240s timeouts with up to
+                            // RetryCount=2 - PMT's outer timeout has to cover the worst-case retry
+                            // budget (3 * 240s = 720s). The TEST method's own [TestMethod
+                            // (Timeout=...)] attribute still bounds the in-test work; PMT's outer
+                            // timeout only fires if the subprocess itself wedges past the test's
+                            // own timeout + retry budget. The previous 120s hardcoded value
+                            // pre-empted every WebRTC test that did real peer discovery, even when
+                            // the test's own attribute granted 180s+. Bumping to 10 minutes
+                            // restores the contract: "PMT respects test-method timeouts."
+                            var result = await ProcessRunner.Run(publishedBinary, rowTest.Name, timeout: 600_000).ConfigureAwait(false);
                             var resultLines = result.Text.Split(new[] { '\n', '\r' }, StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
                             var testResltTest = resultLines.LastOrDefault(o => o.StartsWith("TEST: "))?.Substring(6);
                             var unitTest = testResltTest != null ? JsonSerializer.Deserialize<UnitTest>(testResltTest) : null;
@@ -412,16 +561,793 @@ namespace PlaywrightMultiTest
                     yield return testCaseData;
                 }
             }
-            // Future: cross-platform media tests (camera preview, audio capture)
+            var nmt = true;
+            // Playwright-level P2P integration tests (multi-tab real-WebRTC, ~120s timeouts).
+            // GATED OFF — P2P backend is on hold (core-6 focus), consistent with the P2P unit
+            // tests gated out of the Demo/DemoConsole registrations. Uncomment to re-enable
+            // alongside the P2PLogicTests registration blocks in the Program.cs files.
+            // The P2PSwarm* helper methods below are retained for that re-enable.
+            // foreach (var testableProject in TestableProjects)
+            // {
+            //     if (testableProject is TestableBlazorWasm)
+            //     {
+            //         var proj = testableProject;
+            //         yield return new TestCaseData(new ProjectTest(proj, "P2PSwarm", "TwoTab_PeerDiscovery")
+            //         {
+            //             TestFunc = async (page) => await P2PSwarmTwoTabTest(page, (TestableBlazorWasm)proj),
+            //         }).SetName("P2PSwarm.TwoTab_PeerDiscovery").SetCategory("P2PSwarm");
+            //
+            //         yield return new TestCaseData(new ProjectTest(proj, "P2PSwarm", "PeerStability_NoCascadeAfterHandshake")
+            //         {
+            //             TestFunc = async (page) => await P2PSwarmStabilityTest(page, (TestableBlazorWasm)proj),
+            //         }).SetName("P2PSwarm.PeerStability_NoCascadeAfterHandshake").SetCategory("P2PSwarm");
+            //
+            //         yield return new TestCaseData(new ProjectTest(proj, "P2PSwarm", "RenderMandelbrot_PaintsCanvas")
+            //         {
+            //             TestFunc = async (page) => await P2PSwarmRenderMandelbrotTest(page, (TestableBlazorWasm)proj),
+            //         }).SetName("P2PSwarm.RenderMandelbrot_PaintsCanvas").SetCategory("P2PSwarm");
+            //     }
+            // }
         }
 
         /// <summary>
-        /// This is called after tests have been enumerated but before they are run. You can use this to start up any services or infrastructure needed for the tests.
+        /// Playwright-level P2P test: drives two tabs via CDP - creates a swarm in tab 1,
+        /// joins from tab 2 via the auto-shared join link, verifies peer count goes up,
+        /// then closes tab 2 to verify peer dropout.
+        ///
+        /// Reads ComputeSwarm state via the demo's PublishToHarness mechanism (same hook
+        /// WasmP2PBrowserTests.ComputeSwarm_Benchmark_RoundTrips_BetweenTwoPopups uses).
+        /// The demo writes <c>computeSwarmState_&lt;testId&gt;</c> to its own window when
+        /// <c>?testId=</c> is in the URL; Playwright reads it via Page.EvaluateAsync.
+        /// No DOM scraping, no fragile XPath, no fake "tracker can't relay same-context"
+        /// excuse - if peer discovery breaks, this test FAILS.
         /// </summary>
-        /// <returns></returns>
+        private static async Task P2PSwarmTwoTabTest(IPage page1, TestableBlazorWasm blazorProj)
+        {
+            var baseUrl = "https://localhost:5580";
+            var coordTestId = $"twotab-coord-{Guid.NewGuid():N}".Substring(0, 24);
+            var workerTestId = $"twotab-work-{Guid.NewGuid():N}".Substring(0, 24);
+
+            // Tab 1: coordinator. autoCreate=true triggers the create-swarm flow on load.
+            var coordPage = await blazorProj.BrowserContext.NewPageAsync();
+            coordPage.Console += (_, msg) => LogStatus($"[Coord {msg.Type}] {msg.Text}");
+
+            var coordUrl = $"{baseUrl}/compute?testId={Uri.EscapeDataString(coordTestId)}&autoCreate=true";
+            await coordPage.GotoAsync(coordUrl);
+
+            // PublishToHarness writes the state as a JSON STRING via SpawnDev.BlazorJS's
+            // serializing JS.Set, so we parse on read. Helper isolates the parse.
+            const string parseStateJs = "(k) => { var v = globalThis[k]; return typeof v === 'string' ? JSON.parse(v) : v; }";
+
+            // Wait for the demo to publish a join link to its own window.
+            string? joinLink = await WaitForJsValueAsync(coordPage,
+                $"() => {{ var s = ({parseStateJs})('computeSwarmState_{coordTestId}'); return s ? s.joinLink : null; }}",
+                timeoutSeconds: 60,
+                label: $"coordinator joinLink for {coordTestId}");
+
+            if (string.IsNullOrEmpty(joinLink) || !joinLink.StartsWith("http"))
+                throw new Exception($"Coordinator did not publish a usable joinLink: '{joinLink}'");
+            LogStatus($"[P2P TwoTab] Join URL: {joinLink[..Math.Min(80, joinLink.Length)]}...");
+
+            // Tab 2: worker. autojoin=1 skips the consent dialog.
+            var separator = joinLink.Contains('?') ? "&" : "?";
+            var workerUrl = $"{joinLink}{separator}autojoin=1&testId={Uri.EscapeDataString(workerTestId)}";
+
+            var page2 = await blazorProj.BrowserContext.NewPageAsync();
+            page2.Console += (_, msg) => LogStatus($"[Worker {msg.Type}] {msg.Text}");
+            try
+            {
+                await page2.GotoAsync(workerUrl);
+                LogStatus("[P2P TwoTab] Worker tab opened, waiting for peer discovery...");
+
+                // Wait for coordinator to see at least one peer. Real WebRTC peer
+                // discovery + DTLS over hub.spawndev.com can take up to ~60-80s on
+                // a cold tracker connection. Logged per poll so we can see progress.
+                var peerCountJs = $"() => {{ var s = ({parseStateJs})('computeSwarmState_{coordTestId}'); return s ? s.peerCount : null; }}";
+                int lastLogged = -1;
+                var peerCount = await WaitForJsValueAsync(coordPage, peerCountJs,
+                    timeoutSeconds: 120,
+                    label: "coordinator.peerCount >= 1",
+                    predicate: v =>
+                    {
+                        var n = AsInt(v);
+                        if (n.HasValue && n.Value != lastLogged)
+                        {
+                            LogStatus($"[P2P TwoTab] coord.peerCount={n.Value}");
+                            lastLogged = n.Value;
+                        }
+                        return n.HasValue && n.Value >= 1;
+                    });
+
+                var pc = AsInt(peerCount) ?? -1;
+                if (pc < 1)
+                    throw new Exception($"Coordinator never saw a peer (final peerCount={peerCount}). " +
+                        "Check that BrowserContext.NewPageAsync produces distinct WebTorrent PeerIds " +
+                        "and the tracker is reachable.");
+
+                LogStatus($"[P2P TwoTab] Peer connected ✓ (coord.peerCount={pc})");
+
+                // Diagnostic: dump peerIds so a phantom-registration bug can be diagnosed
+                // when peerCount > 1 (one tab, but the coordinator sees multiple peers).
+                var peerIdsJs = $"() => {{ var s = ({parseStateJs})('computeSwarmState_{coordTestId}'); return s ? JSON.stringify(s.peerIds) : '[]'; }}";
+                var peerIdsConnected = await coordPage.EvaluateAsync<string>(peerIdsJs);
+                LogStatus($"[P2P TwoTab] peerIds at connected: {peerIdsConnected}");
+
+                // Close worker tab to verify dropout.
+                await page2.CloseAsync();
+                page2 = null;
+
+                LogStatus("[P2P TwoTab] Worker closed, waiting for peer dropout...");
+                // BRRTC-DIAG: probe each poller's state across the dropout window
+                try
+                {
+                    var pcCount = await coordPage.EvaluateAsync<int?>("() => globalThis.__brrtc_pc_count");
+                    LogStatus($"[P2P TwoTab][BRRTC-DIAG] pc_count={pcCount}");
+                    for (int probe = 0; probe < 18; probe++)
+                    {
+                        await Task.Delay(5000);
+                        var states = await coordPage.EvaluateAsync<string?>(
+                            "() => { var n = globalThis.__brrtc_pc_count || 0; var arr = []; for (var i = 1; i <= n; i++) { arr.push(globalThis['__brrtc_pc_' + i] || '?'); } return arr.join(' || '); }");
+                        var synthStates = await coordPage.EvaluateAsync<string?>(
+                            "() => { var n = globalThis.__brrtc_pc_count || 0; var arr = []; for (var i = 1; i <= n; i++) { var s = globalThis['__brrtc_synth_' + i]; if (s) arr.push('#' + i + ':' + s); } return arr.join(' | '); }");
+                        var bridgeOnClose = await coordPage.EvaluateAsync<string?>("() => globalThis.__bridge_wire_onclose");
+                        var bridgeSchedule = await coordPage.EvaluateAsync<string?>("() => globalThis.__bridge_schedule_unreg");
+                        var bridgeUnreg = await coordPage.EvaluateAsync<string?>("() => globalThis.__bridge_unregister_fired");
+                        var bridgeShort = await coordPage.EvaluateAsync<string?>("() => globalThis.__bridge_short_circuit");
+                        var bridgeWireset = await coordPage.EvaluateAsync<string?>("() => globalThis.__bridge_wireset_dump");
+                        var pcNow = await coordPage.EvaluateAsync<object?>(peerCountJs);
+                        LogStatus($"[P2P TwoTab][BRRTC-DIAG] t+{(probe+1)*5}s peerCount={pcNow} states={states}");
+                        if (!string.IsNullOrEmpty(synthStates))
+                            LogStatus($"[P2P TwoTab][BRRTC-DIAG] t+{(probe+1)*5}s synth={synthStates}");
+                        if (!string.IsNullOrEmpty(bridgeOnClose))
+                            LogStatus($"[P2P TwoTab][BRRTC-DIAG] t+{(probe+1)*5}s bridge_onclose={bridgeOnClose}");
+                        if (!string.IsNullOrEmpty(bridgeSchedule))
+                            LogStatus($"[P2P TwoTab][BRRTC-DIAG] t+{(probe+1)*5}s bridge_schedule={bridgeSchedule}");
+                        if (!string.IsNullOrEmpty(bridgeUnreg))
+                            LogStatus($"[P2P TwoTab][BRRTC-DIAG] t+{(probe+1)*5}s bridge_unregister={bridgeUnreg}");
+                        if (!string.IsNullOrEmpty(bridgeShort))
+                            LogStatus($"[P2P TwoTab][BRRTC-DIAG] t+{(probe+1)*5}s bridge_short={bridgeShort}");
+                        if (!string.IsNullOrEmpty(bridgeWireset))
+                            LogStatus($"[P2P TwoTab][BRRTC-DIAG] t+{(probe+1)*5}s bridge_wireset={bridgeWireset}");
+                    }
+                } catch (Exception ex) { LogStatus($"[P2P TwoTab][BRRTC-DIAG] probe error: {ex.Message}"); }
+                var lastDropLogged = -1;
+                var droppedCount = await WaitForJsValueAsync(coordPage, peerCountJs,
+                    timeoutSeconds: 90,
+                    label: "coordinator.peerCount returns to 0",
+                    predicate: v =>
+                    {
+                        var n = AsInt(v);
+                        if (n.HasValue && n.Value != lastDropLogged)
+                        {
+                            LogStatus($"[P2P TwoTab] coord.peerCount (post-drop)={n.Value}");
+                            lastDropLogged = n.Value;
+                        }
+                        return AsInt(v) == 0;
+                    });
+
+                LogStatus($"[P2P TwoTab] Coordinator peer count after dropout: {droppedCount}");
+                LogStatus("[P2P TwoTab] Two-tab peer discovery + dropout: COMPLETE ✓");
+            }
+            finally
+            {
+                if (page2 != null)
+                {
+                    try { await page2.CloseAsync(); } catch { }
+                }
+                try { await coordPage.CloseAsync(); } catch { }
+            }
+        }
+
+        /// <summary>
+        /// Live-demo regression test: opens coord + worker tabs through the demo's
+        /// own `P2PCompute.CreateSwarmAsync` / `JoinSwarmAsync` flow (matching what
+        /// the deployed RenderMandelbrot demo does), waits for the BT handshake to
+        /// complete, then keeps both tabs open and asserts the connection STAYS
+        /// alive without an SCTP cascade.
+        ///
+        /// Catches the rc.5 dedup-via-dispose cascade trigger that the original
+        /// `TwoTab_PeerDiscovery` test missed: TwoTab waited for `peerCount &gt;= 1`
+        /// (passes the moment the first peer connects), then immediately closed
+        /// the worker tab and waited for `peerCount = 0`. A cascade-induced drop
+        /// during the open window is indistinguishable from the worker-close drop
+        /// in that flow, so the test passed for the wrong reason.
+        ///
+        /// This test fails on TWO conditions:
+        ///   1. `peerCount` drops below 1 while BOTH tabs are still open (cascade
+        ///      took out the connection without anyone closing).
+        ///   2. Either tab's browser console emits a string matching the cascade
+        ///      signature (`sctp-failure` / `User-Initiated Abort` /
+        ///      `sctpCauseCode=12` / `[CH-ERROR-DIAG]`).
+        ///
+        /// The stability-window length (60s) was chosen because Captain's live repro
+        /// 2026-05-03 fired the cascade within ~5-10s of BT handshake completion.
+        /// 60s gives generous headroom while staying inside PMT's per-test timeout.
+        /// </summary>
+        private static async Task P2PSwarmStabilityTest(IPage page1, TestableBlazorWasm blazorProj)
+        {
+            var baseUrl = "https://localhost:5580";
+            var coordTestId = $"stability-coord-{Guid.NewGuid():N}".Substring(0, 26);
+            var workerTestId = $"stability-work-{Guid.NewGuid():N}".Substring(0, 26);
+
+            // Capture cascade-signature messages from BOTH tabs into a shared list
+            // and assert it's empty at the end. Match against the strings RtcPeer's
+            // CH-ERROR-DIAG handler emits when Chromium fires the cascade.
+            var cascadeMatches = new System.Collections.Concurrent.ConcurrentBag<string>();
+            void ScanForCascade(string source, string text)
+            {
+                if (string.IsNullOrEmpty(text)) return;
+                if (text.Contains("sctp-failure", StringComparison.OrdinalIgnoreCase)
+                    || text.Contains("User-Initiated Abort", StringComparison.OrdinalIgnoreCase)
+                    || text.Contains("sctpCauseCode=12", StringComparison.OrdinalIgnoreCase)
+                    || text.Contains("[CH-ERROR-DIAG]", StringComparison.OrdinalIgnoreCase))
+                {
+                    cascadeMatches.Add($"[{source}] {text}");
+                }
+            }
+
+            var coordPage = await blazorProj.BrowserContext.NewPageAsync();
+            coordPage.Console += (_, msg) =>
+            {
+                LogStatus($"[Stability/Coord {msg.Type}] {msg.Text}");
+                ScanForCascade("Coord", msg.Text);
+            };
+
+            var coordUrl = $"{baseUrl}/compute?testId={Uri.EscapeDataString(coordTestId)}&autoCreate=true";
+            await coordPage.GotoAsync(coordUrl);
+
+            const string parseStateJs = "(k) => { var v = globalThis[k]; return typeof v === 'string' ? JSON.parse(v) : v; }";
+
+            string? joinLink = await WaitForJsValueAsync(coordPage,
+                $"() => {{ var s = ({parseStateJs})('computeSwarmState_{coordTestId}'); return s ? s.joinLink : null; }}",
+                timeoutSeconds: 60,
+                label: $"coordinator joinLink for {coordTestId}");
+
+            if (string.IsNullOrEmpty(joinLink) || !joinLink.StartsWith("http"))
+                throw new Exception($"Coordinator did not publish a usable joinLink: '{joinLink}'");
+            LogStatus($"[P2P Stability] Join URL: {joinLink[..Math.Min(80, joinLink.Length)]}...");
+
+            var separator = joinLink.Contains('?') ? "&" : "?";
+            var workerUrl = $"{joinLink}{separator}autojoin=1&testId={Uri.EscapeDataString(workerTestId)}";
+
+            var page2 = await blazorProj.BrowserContext.NewPageAsync();
+            page2.Console += (_, msg) =>
+            {
+                LogStatus($"[Stability/Worker {msg.Type}] {msg.Text}");
+                ScanForCascade("Worker", msg.Text);
+            };
+
+            try
+            {
+                await page2.GotoAsync(workerUrl);
+                LogStatus("[P2P Stability] Worker tab opened, waiting for peer discovery...");
+
+                var peerCountJs = $"() => {{ var s = ({parseStateJs})('computeSwarmState_{coordTestId}'); return s ? s.peerCount : null; }}";
+                int lastLogged = -1;
+                await WaitForJsValueAsync(coordPage, peerCountJs,
+                    timeoutSeconds: 120,
+                    label: "coordinator.peerCount >= 1 (initial connect)",
+                    predicate: v =>
+                    {
+                        var n = AsInt(v);
+                        if (n.HasValue && n.Value != lastLogged)
+                        {
+                            LogStatus($"[P2P Stability] coord.peerCount={n.Value}");
+                            lastLogged = n.Value;
+                        }
+                        return n.HasValue && n.Value >= 1;
+                    });
+
+                LogStatus("[P2P Stability] Peer connected. Holding both tabs open for 60s, asserting peerCount stays >= 1 with no SCTP cascade...");
+
+                // Stability window: poll every 2s for 60s. peerCount must stay >= 1
+                // the entire time. Closing either tab is FORBIDDEN - this is the
+                // exact "sit there until they threw an error" scenario from Captain's
+                // 2026-05-03 live repro.
+                const int stabilitySeconds = 60;
+                const int pollIntervalMs = 2000;
+                int polls = stabilitySeconds * 1000 / pollIntervalMs;
+                int minPeerCount = int.MaxValue;
+                int firstDropAtPollIndex = -1;
+                for (int i = 0; i < polls; i++)
+                {
+                    await Task.Delay(pollIntervalMs);
+                    var raw = await coordPage.EvaluateAsync<object?>(peerCountJs);
+                    var n = AsInt(raw);
+                    if (n.HasValue)
+                    {
+                        if (n.Value < minPeerCount) minPeerCount = n.Value;
+                        if (n.Value < 1 && firstDropAtPollIndex < 0)
+                        {
+                            firstDropAtPollIndex = i;
+                            LogStatus($"[P2P Stability] FAIL: coord.peerCount dropped to {n.Value} at t+{(i + 1) * pollIntervalMs / 1000}s while both tabs still open");
+                            // Keep polling so we can see what else happens, but the test will fail at the end.
+                        }
+                        if ((i + 1) % 5 == 0)
+                            LogStatus($"[P2P Stability] t+{(i + 1) * pollIntervalMs / 1000}s peerCount={n.Value} (min={minPeerCount})");
+                    }
+                }
+
+                LogStatus($"[P2P Stability] 60s window complete. minPeerCount={minPeerCount} cascadeMatches={cascadeMatches.Count}");
+
+                if (firstDropAtPollIndex >= 0)
+                {
+                    var dropTimeSec = (firstDropAtPollIndex + 1) * pollIntervalMs / 1000;
+                    throw new Exception(
+                        $"P2PSwarm.PeerStability: coord.peerCount dropped below 1 (to {minPeerCount}) at t+{dropTimeSec}s while both tabs were still open. " +
+                        $"This is the cascade-trigger regression. cascadeMatches={cascadeMatches.Count}");
+                }
+
+                if (cascadeMatches.Count > 0)
+                {
+                    var sample = string.Join(" | ", cascadeMatches.Take(3));
+                    throw new Exception(
+                        $"P2PSwarm.PeerStability: detected {cascadeMatches.Count} cascade-signature console message(s) in 60s window even though peerCount stayed >= 1. " +
+                        $"Sample: {sample}");
+                }
+
+                LogStatus("[P2P Stability] PASS: peerCount stayed >= 1 for 60s with no SCTP cascade signatures observed.");
+            }
+            finally
+            {
+                if (page2 != null)
+                {
+                    try { await page2.CloseAsync(); } catch { }
+                }
+                try { await coordPage.CloseAsync(); } catch { }
+            }
+        }
+
+        /// <summary>
+        /// Live-demo regression test for the canvas paint pipeline: opens coord +
+        /// worker through the demo's own swarm-create / swarm-join flow, waits for
+        /// the BT handshake, clicks the Mandelbrot Render button on the coord, and
+        /// asserts the canvas contains real (non-uniform) pixel data after the
+        /// dispatch completes.
+        ///
+        /// Catches the 2026-05-03 blank-canvas regression: dispatch succeeded
+        /// (timer ticked, "Rendered in 908ms" UI text shown) but the canvas stayed
+        /// the dark-blue page background because the manual `PutImageBytes` path
+        /// was wired to an `ElementReference` the JS-side `getElementById` could
+        /// not resolve. The fix replaced that path with the canonical
+        /// `CanvasRendererFactory` pattern; this test guards that flip from
+        /// regressing.
+        ///
+        /// Failure conditions:
+        ///   1. Dispatch never reports a timing (UI never shows "Rendered in").
+        ///   2. The canvas is still uniform (max-min channel range &lt; 8) after
+        ///      the dispatch — the cardinal "blank canvas" symptom.
+        /// </summary>
+        private static async Task P2PSwarmRenderMandelbrotTest(IPage page1, TestableBlazorWasm blazorProj)
+        {
+            var baseUrl = "https://localhost:5580";
+            var coordTestId = $"render-coord-{Guid.NewGuid():N}".Substring(0, 24);
+            var workerTestId = $"render-work-{Guid.NewGuid():N}".Substring(0, 24);
+
+            var coordPage = await blazorProj.BrowserContext.NewPageAsync();
+            coordPage.Console += (_, msg) => LogStatus($"[Render/Coord {msg.Type}] {msg.Text}");
+
+            var coordUrl = $"{baseUrl}/compute?testId={Uri.EscapeDataString(coordTestId)}&autoCreate=true";
+            await coordPage.GotoAsync(coordUrl);
+
+            const string parseStateJs = "(k) => { var v = globalThis[k]; return typeof v === 'string' ? JSON.parse(v) : v; }";
+
+            string? joinLink = await WaitForJsValueAsync(coordPage,
+                $"() => {{ var s = ({parseStateJs})('computeSwarmState_{coordTestId}'); return s ? s.joinLink : null; }}",
+                timeoutSeconds: 60,
+                label: $"coordinator joinLink for {coordTestId}");
+
+            if (string.IsNullOrEmpty(joinLink) || !joinLink.StartsWith("http"))
+                throw new Exception($"Coordinator did not publish a usable joinLink: '{joinLink}'");
+
+            var separator = joinLink.Contains('?') ? "&" : "?";
+            var workerUrl = $"{joinLink}{separator}autojoin=1&testId={Uri.EscapeDataString(workerTestId)}";
+
+            IPage? page2 = await blazorProj.BrowserContext.NewPageAsync();
+            page2.Console += (_, msg) => LogStatus($"[Render/Worker {msg.Type}] {msg.Text}");
+
+            try
+            {
+                await page2.GotoAsync(workerUrl);
+
+                var peerCountJs = $"() => {{ var s = ({parseStateJs})('computeSwarmState_{coordTestId}'); return s ? s.peerCount : null; }}";
+                await WaitForJsValueAsync(coordPage, peerCountJs,
+                    timeoutSeconds: 120,
+                    label: "coordinator.peerCount >= 1 for render dispatch",
+                    predicate: v => { var n = AsInt(v); return n.HasValue && n.Value >= 1; });
+
+                LogStatus("[P2P Render] Peer connected. Clicking Mandelbrot Render button...");
+
+                // The Render button is the one whose handler binds to the
+                // _mandelbrotRunning gating field. There's a single 'Render' button
+                // on /compute scoped to the Mandelbrot panel.
+                await coordPage.GetByText("Render", new() { Exact = true }).First.ClickAsync();
+
+                // Wait up to 60s for the dispatch to finish + UI to publish the
+                // _mandelbrotTimeMs timer. The demo writes timing into the same
+                // computeSwarmState publish hook (extended in the harness flow).
+                var renderedTextLocator = coordPage.Locator("text=Rendered in").First;
+                await renderedTextLocator.WaitForAsync(new() { Timeout = 60_000 });
+                LogStatus("[P2P Render] Dispatch finished, UI shows 'Rendered in ...'. Sampling canvas...");
+
+                // Sample the Mandelbrot canvas — locate it by its parent containing
+                // 'Distributed Mandelbrot' text rather than querySelector('canvas')
+                // which would return whichever canvas is first in the DOM (n-body /
+                // qr / others). A blank canvas yields range 0; even a faint
+                // Mandelbrot has a dark body + bright outer ring, so range >= 8 is
+                // conservative.
+                var sampleJs = @"
+                    () => {
+                        var canvases = Array.from(document.querySelectorAll('canvas'));
+                        var canvasInfo = canvases.map(c => ({ w: c.width, h: c.height, parentText: (c.parentElement && c.parentElement.innerText || '').slice(0,80), display: getComputedStyle(c).display }));
+                        var c = canvases.find(c => {
+                            var p = c.parentElement;
+                            while (p) {
+                                if ((p.innerText || '').includes('Distributed Mandelbrot')) return true;
+                                p = p.parentElement;
+                            }
+                            return false;
+                        });
+                        if (!c) return { err: 'no Mandelbrot canvas found', allCanvases: canvasInfo };
+                        var ctx = c.getContext('2d');
+                        if (!ctx) return { err: 'no 2d ctx', canvasInfo: canvasInfo };
+                        var w = c.width, h = c.height;
+                        if (!w || !h) return { err: 'canvas has zero size: ' + w + 'x' + h };
+                        var img = ctx.getImageData(0, 0, w, h);
+                        var d = img.data;
+                        var minR=255,minG=255,minB=255,maxR=0,maxG=0,maxB=0,nonZero=0;
+                        var sampleStride = 64; // sample every 64th pixel
+                        for (var i = 0; i < d.length; i += 4 * sampleStride) {
+                            var r = d[i], g = d[i+1], b = d[i+2];
+                            if (r|g|b) nonZero++;
+                            if (r<minR) minR=r; if (r>maxR) maxR=r;
+                            if (g<minG) minG=g; if (g>maxG) maxG=g;
+                            if (b<minB) minB=b; if (b>maxB) maxB=b;
+                        }
+                        return { w:w, h:h, minR:minR, maxR:maxR, minG:minG, maxG:maxG, minB:minB, maxB:maxB, nonZero:nonZero, canvasCount: canvases.length };
+                    }";
+
+                var sampleResult = await coordPage.EvaluateAsync<JsonElement>(sampleJs);
+                LogStatus($"[P2P Render] Canvas sample: {sampleResult}");
+
+                if (sampleResult.TryGetProperty("err", out var errProp))
+                    throw new Exception($"Canvas sample failed: {errProp.GetString()}");
+
+                int rangeR = sampleResult.GetProperty("maxR").GetInt32() - sampleResult.GetProperty("minR").GetInt32();
+                int rangeG = sampleResult.GetProperty("maxG").GetInt32() - sampleResult.GetProperty("minG").GetInt32();
+                int rangeB = sampleResult.GetProperty("maxB").GetInt32() - sampleResult.GetProperty("minB").GetInt32();
+                int maxRange = Math.Max(rangeR, Math.Max(rangeG, rangeB));
+
+                if (maxRange < 8)
+                    throw new Exception($"Canvas paint regression: blank canvas detected (max channel range={maxRange}). " +
+                                        $"R={rangeR}, G={rangeG}, B={rangeB}. The Mandelbrot dispatch reported a timing " +
+                                        $"but the canvas pixels are uniform — CanvasRendererFactory paint pipeline broken.");
+
+                LogStatus($"[P2P Render] PASS: canvas painted with non-uniform pixels (max channel range={maxRange}).");
+            }
+            finally
+            {
+                if (page2 != null)
+                {
+                    try { await page2.CloseAsync(); } catch { }
+                }
+                try { await coordPage.CloseAsync(); } catch { }
+            }
+        }
+
+        // Polls a JS expression on the page until it returns a non-null value (or one that
+        // satisfies the optional predicate). Throws on timeout - no fake skip-on-timeout.
+        // Returns the last value seen on the page when the predicate matches.
+        private static async Task<object?> WaitForJsValueAsync(IPage page, string jsExpr,
+            int timeoutSeconds, string label, Func<object?, bool>? predicate = null)
+        {
+            var deadline = DateTime.UtcNow.AddSeconds(timeoutSeconds);
+            object? lastValue = null;
+            while (DateTime.UtcNow < deadline)
+            {
+                try
+                {
+                    var raw = await page.EvaluateAsync<object?>(jsExpr);
+                    lastValue = raw is JsonElement je
+                        ? (je.ValueKind == JsonValueKind.Number ? (object)je.GetInt32()
+                           : je.ValueKind == JsonValueKind.String ? je.GetString()
+                           : je.ValueKind == JsonValueKind.True ? true
+                           : je.ValueKind == JsonValueKind.False ? false
+                           : je.ValueKind == JsonValueKind.Null ? null
+                           : raw)
+                        : raw;
+                    if (predicate != null)
+                    {
+                        if (predicate(lastValue)) return lastValue;
+                    }
+                    else if (lastValue != null)
+                    {
+                        return lastValue;
+                    }
+                }
+                catch { /* page navigating or not yet ready */ }
+                await Task.Delay(500);
+            }
+            throw new Exception($"Timeout ({timeoutSeconds}s) waiting for {label}. Last value: {lastValue}");
+        }
+
+        // String overload helper - typed wait for a JS expression that returns a string.
+        private static async Task<string?> WaitForJsValueAsync(IPage page, string jsExpr,
+            int timeoutSeconds, string label)
+        {
+            var raw = await WaitForJsValueAsync(page, jsExpr, timeoutSeconds, label, v => v is string s && !string.IsNullOrEmpty(s));
+            return raw as string;
+        }
+
+        // Coerces whatever shape Page.EvaluateAsync returns for a JS number (JsonElement,
+        // long, int, double) into a nullable int. Returns null for non-numeric / null.
+        private static int? AsInt(object? v) => v switch
+        {
+            int i => i,
+            long l => (int)l,
+            double d => (int)d,
+            JsonElement je when je.ValueKind == JsonValueKind.Number => je.GetInt32(),
+            _ => null,
+        };
+
+        // ───────────────────────── Parallel lane scheduler ─────────────────────────
+        // The full sweep used to run strictly sequentially: NUnit's [Parallelizable
+        // (ParallelScope.Self)] runs the TestCaseSource cases one at a time, and every
+        // browser test clicked rows on a single shared Chromium page. This scheduler
+        // moves execution into OneTimeSetUp (StartUp) and runs backend "lanes" in
+        // parallel, then NUnit's RunTest just reports the cached per-test outcome.
+        //
+        // Lane model (v1):
+        //   Phase A (parallel): browser non-Wasm rows (sequential on the one page) ‖
+        //     CPU subprocesses (cap N) ‖ CUDA subprocesses (cap 1, GPU) ‖
+        //     OpenCL subprocesses (cap 1, GPU).
+        //   Phase B (isolated): Wasm rows alone — Wasm sort kernels spawn
+        //     hardwareConcurrency pure-spin barrier workers that STARVE under CPU
+        //     oversubscription, so Wasm never overlaps any other CPU-heavy lane.
+        // Set PMT_PARALLEL=off to fall back to the original sequential per-case path.
+
+        public sealed record ScheduledOutcome(string Status, string? Message, double DurationMs);
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, ScheduledOutcome> _outcomes = new();
+        public bool ParallelEnabled { get; private set; }
+        public bool TryGetOutcome(string name, out ScheduledOutcome outcome) => _outcomes.TryGetValue(name, out outcome!);
+
+        private static int EnvInt(string name, int dflt)
+            => int.TryParse(Environment.GetEnvironmentVariable(name), out var v) && v > 0 ? v : dflt;
+
+        // Per-lane concurrency caps (env-overridable). GPU-bound lanes default to 1 to
+        // avoid OOM/contention with the browser WebGPU lane sharing the same card.
+        private static int CapFor(string lane) => lane switch
+        {
+            "cpu" => EnvInt("PMT_CPU_PARALLELISM", 4),
+            "cuda" => EnvInt("PMT_CUDA_PARALLELISM", 1),
+            "opencl" => EnvInt("PMT_OPENCL_PARALLELISM", 1),
+            _ => EnvInt("PMT_DESKTOP_PARALLELISM", 4),
+        };
+
+        private static bool IsWasm(ProjectTest t) => (t.TestTypeName ?? "").Contains("Wasm", StringComparison.OrdinalIgnoreCase);
+
+        // Substring, case-insensitive match against a test's full name / type / method.
+        // ── PMT_LANES: run only the named backend lanes ────────────────────────────────────────────
+        //
+        // 🔴 WHY THIS EXISTS. The standing rule is FAST BACKENDS FIRST - CUDA (desktop) + WebGPU
+        // (browser) for iteration, with the full six-backend sweep saved for the release gate. PMT had
+        // PMT_FILTER (by test NAME) but no way to scope by BACKEND, so a one-question check on WebGPU
+        // still ran the same test on CPU, WebGL and Wasm. TJ, 2026-09-15: "FUCK CPU AND EVERYTHING ELSE
+        // RIGHT NOW UNTIL YOU GET THE 2 MAIN BACKENDS WORKING PERFECTLY ... that way we are not wasting
+        // time testing shit code on shit backends that takes forever."
+        //
+        //   PMT_LANES=WebGPU,Cuda     iterate on the two that matter
+        //   (unset)                   every lane, which is what a release gate wants
+        //
+        // Matched against the TEST CLASS name (WebGPUTests, CudaTests, OpenCLTests, CPUTests,
+        // WebGLTests, WasmTests, ...), substring, case-insensitive - so "WebGPU" also selects
+        // WebGPUNoSubgroupsTests, which is what you want when scoping to a backend.
+        //
+        // ⚠️ APPLY IT AT BOTH ENUMERATION SITES. Ported from SpawnDev.ILGPU.ML, where it was first
+        // wired into the browser site only - the desktop lane then still ran unfiltered and pegged all
+        // 12 cores, which reads exactly like the filter not working at all.
+        private static string[]? LaneFilter()
+        {
+            var env = Environment.GetEnvironmentVariable("PMT_LANES");
+            if (string.IsNullOrWhiteSpace(env)) return null;
+            return env.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        }
+
+        private static bool MatchesLane(string[]? lanes, string? testTypeName)
+        {
+            if (lanes == null) return true;
+            if (testTypeName == null) return false;
+            foreach (var lane in lanes)
+                if (testTypeName.Contains(lane, StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
+        }
+
+        // Comma-separated = OR. A single substring cannot select two unrelated suites (say a feature
+        // and its regression guard) without also dragging in everything whose name happens to share a
+        // prefix; the alternative was two full PMT invocations, each paying the publish + static-server
+        // + Chromium-launch cost again. Ported from SpawnDev.ILGPU.ML.
+        private static bool MatchesFilter(string filter, ProjectTest t)
+        {
+            foreach (var term in filter.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+            {
+                if ((t.Name?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false)
+                    || (t.TestTypeName?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false)
+                    || (t.TestMethodName?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private static string DesktopLaneOf(string? typeName) => (typeName ?? "") switch
+        {
+            "CudaTests" or "CuRandTests" or "NvJpegTests" => "cuda",
+            "OpenCLTests" => "opencl",
+            _ => "cpu", // CPUTests + capability/logic test classes (fast, CPU-bound)
+        };
+
+        /// <summary>
+        /// Called after tests are enumerated, before NUnit runs the cases. When parallel
+        /// scheduling is enabled this runs the entire sweep in lanes and caches outcomes;
+        /// RunTest then reports them. With PMT_PARALLEL=off this is a no-op and RunTest
+        /// executes each test live (original sequential behaviour).
+        /// </summary>
         public async Task StartUp()
         {
             Debug.WriteLine("StartUp()");
+            ParallelEnabled = !string.Equals(Environment.GetEnvironmentVariable("PMT_PARALLEL"), "off", StringComparison.OrdinalIgnoreCase);
+            if (!ParallelEnabled)
+            {
+                LogStatus("Parallel scheduler DISABLED (PMT_PARALLEL=off) — NUnit runs cases sequentially.");
+                return;
+            }
+            await RunScheduledAsync().ConfigureAwait(false);
+        }
+
+        private async Task RunScheduledAsync()
+        {
+            var swAll = Stopwatch.StartNew();
+            var blazor = TestableProjects.OfType<TestableBlazorWasm>().FirstOrDefault();
+
+            // Trivial/build tests (no TestTypeName) — record their preset result instantly.
+            foreach (var proj in TestableProjects)
+                foreach (var t in proj.Tests.Where(t => t.TestTypeName == null))
+                    await ExecuteAndCaptureAsync(t, null).ConfigureAwait(false);
+
+            // ── Phase A: non-Wasm browser lane ‖ desktop lanes ──────────────────────
+            var phaseA = new List<Task>();
+
+            foreach (var console in TestableProjects.OfType<TestableConsole>())
+            {
+                foreach (var laneGroup in console.Tests
+                             .Where(t => t.TestTypeName != null)
+                             .GroupBy(t => DesktopLaneOf(t.TestTypeName)))
+                {
+                    var tests = laneGroup.ToList();
+                    var cap = CapFor(laneGroup.Key);
+                    LogStatus($"Phase A desktop lane '{laneGroup.Key}': {tests.Count} tests, cap={cap}");
+                    phaseA.Add(RunLaneConcurrentAsync(tests, cap, null));
+                }
+            }
+
+            if (blazor?.Page != null)
+            {
+                var nonWasm = blazor.Tests.Where(t => t.TestTypeName != null && !IsWasm(t)).ToList();
+                LogStatus($"Phase A browser non-Wasm lane: {nonWasm.Count} tests (sequential on shared page)");
+                phaseA.Add(RunLaneSequentialAsync(nonWasm, blazor));
+            }
+
+            await Task.WhenAll(phaseA).ConfigureAwait(false);
+            LogStatus($"Phase A complete in {swAll.Elapsed:hh\\:mm\\:ss}. Starting Phase B (Wasm, isolated)...");
+
+            // ── Phase B: Wasm lane alone (no other CPU-heavy lane running) ──────────
+            if (blazor?.Page != null)
+            {
+                // Recycle the page before Phase B: Phase A just ran ~4000 sequential
+                // WebGPU/WebGL dispatches (shader compiles, GPU buffers, JS closures) on this
+                // ONE long-lived tab. Left unrecycled, a full sweep occasionally crashes the
+                // renderer partway through Phase B with "Target page, context or browser has
+                // been closed", cascading a false "Fail" onto every remaining Wasm test even
+                // though none of them are actually broken (2026-09-22, TJ's manual full-suite
+                // run: 671 Wasm tests all failed with that exact message once the crash hit).
+                // A fresh page for the isolated, memory-heavy Wasm phase gives it a clean heap.
+                //
+                // ONLY recycle here, at this one natural quiescent point (all of Phase A's work
+                // is fully drained) - NOT periodically mid-lane. A first attempt recycled every
+                // 500 tests DURING Phase A and that made things categorically worse: recycling
+                // while WebGPU resources from the immediately-preceding dispatches are still
+                // live crashed the browser CONTEXT itself (not just the page), and because that
+                // exception was unhandled it killed OneTimeSetUp entirely - all 4489 tests
+                // reported Failed instead of just the tail. RecyclePageAsync is defensive
+                // (never throws) as a second line of defense, but the real fix is simply not
+                // disturbing the page while Phase A is still mid-flight.
+                await RecyclePageAsync(blazor).ConfigureAwait(false);
+                var wasm = blazor.Tests.Where(t => t.TestTypeName != null && IsWasm(t)).ToList();
+                LogStatus($"Phase B Wasm lane: {wasm.Count} tests (isolated, sequential)");
+                await RunLaneSequentialAsync(wasm, blazor).ConfigureAwait(false);
+            }
+
+            LogStatus($"All scheduled tests complete in {swAll.Elapsed:hh\\:mm\\:ss} ({_outcomes.Count} outcomes cached).");
+        }
+
+        private async Task RunLaneSequentialAsync(List<ProjectTest> tests, TestableBlazorWasm blazor)
+        {
+            foreach (var t in tests)
+                await ExecuteAndCaptureAsync(t, blazor.Page).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Closes the shared Blazor WASM test page and opens a fresh one at the same test URL,
+        /// re-waiting for the test table to render, then updates <paramref name="blazor"/>.Page
+        /// so subsequent dispatches use it. See the Phase-A/B boundary call site's comment for
+        /// why this exists (bounding a single page's memory growth across thousands of
+        /// sequential WebGPU/WebGL/Wasm dispatches). The context-level console hook registered
+        /// once in Init() (<c>BrowserContext.Page += ...</c>) fires for this new page too, so
+        /// diagnostic console capture keeps working across a recycle with no extra wiring.
+        ///
+        /// Never throws: this runs inside NUnit's OneTimeSetUp (StartUp -> RunScheduledAsync),
+        /// which has no per-test exception boundary - an unhandled exception here previously
+        /// took down the ENTIRE sweep (all 4489 tests reported Failed) instead of just the
+        /// tests that actually depend on a working page. If the recycle itself fails (the
+        /// browser/context is already in a bad state), log it and leave
+        /// <paramref name="blazor"/>.Page as whatever it was - callers then fail individually
+        /// and recoverably through ExecuteAndCaptureAsync's own try/catch, same as before this
+        /// method existed.
+        /// </summary>
+        private async Task RecyclePageAsync(TestableBlazorWasm blazor)
+        {
+            try
+            {
+                var oldPage = blazor.Page;
+                var newPage = await blazor.BrowserContext.NewPageAsync().ConfigureAwait(false);
+                var testPageUrl = new Uri(new Uri("https://localhost:5580/"), blazor.TestPage).ToString();
+                if (string.Equals(Environment.GetEnvironmentVariable("PMT_WASM_SIMD"), "off", StringComparison.OrdinalIgnoreCase))
+                    testPageUrl += (testPageUrl.Contains('?') ? "&" : "?") + "wasmsimd=off";
+                LogStatus($"Recycling browser page (memory hygiene) -> {testPageUrl}");
+                await newPage.GotoAsync(testPageUrl).ConfigureAwait(false);
+                await newPage.WaitForSelectorAsync("table.unit-test-ready", new() { Timeout = 30000 }).ConfigureAwait(false);
+                blazor.Page = newPage;
+                try { await oldPage.CloseAsync().ConfigureAwait(false); } catch { }
+            }
+            catch (Exception ex)
+            {
+                LogStatus($"Page recycle failed, continuing with the existing page: {ex.Message}");
+            }
+        }
+
+        private async Task RunLaneConcurrentAsync(List<ProjectTest> tests, int cap, IPage? page)
+        {
+            using var sem = new SemaphoreSlim(cap, cap);
+            var tasks = tests.Select(async t =>
+            {
+                await sem.WaitAsync().ConfigureAwait(false);
+                try { await ExecuteAndCaptureAsync(t, page!).ConfigureAwait(false); }
+                finally { sem.Release(); }
+            });
+            await Task.WhenAll(tasks).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Runs one test via its existing TestFunc (browser = click row on the given page;
+        /// desktop = spawn subprocess) and records the outcome. Mirrors the verdict logic
+        /// in UnitTest1.RunTest so cached + live paths agree.
+        /// </summary>
+        private async Task ExecuteAndCaptureAsync(ProjectTest test, IPage? page)
+        {
+            var sw = Stopwatch.StartNew();
+            try
+            {
+                await test.TestFunc(page!).ConfigureAwait(false);
+                sw.Stop();
+                var status = test.Result == TestResult.Unsupported ? "Skip" : "Pass";
+                _outcomes[test.Name] = new ScheduledOutcome(status, test.ResultMessage, sw.Elapsed.TotalMilliseconds);
+            }
+            catch (Exception ex)
+            {
+                sw.Stop();
+                _outcomes[test.Name] = new ScheduledOutcome("Fail", ex.Message, sw.Elapsed.TotalMilliseconds);
+            }
         }
 
         /// <summary>
