@@ -23,7 +23,7 @@ namespace SpawnDev.MultiMedia.Demo.Shared.UnitTests
 
         /// <summary>
         /// Captures real video frames and verifies the data is non-empty.
-        /// Desktop: captures from first available camera (OBS Virtual Camera, webcam, etc.)
+        /// Desktop: captures from OBS Virtual Camera when installed, else the first camera (see TestVideo).
         /// Browser: captures from fake camera provided by Playwright args.
         /// </summary>
         [TestMethod]
@@ -35,7 +35,8 @@ namespace SpawnDev.MultiMedia.Demo.Shared.UnitTests
             if (!hasVideo && !OperatingSystem.IsBrowser())
                 throw new Exception("No video input devices available - cannot test frame capture");
 
-            using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Video = true });
+            using var camera = await AcquireTestCamera();
+            using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Video = camera.Video });
             var track = stream.GetVideoTracks()[0];
             if (track is not IVideoTrack videoTrack)
                 return; // Browser tracks don't implement IVideoTrack (no raw frame access)
@@ -81,9 +82,10 @@ namespace SpawnDev.MultiMedia.Demo.Shared.UnitTests
             if (!devices.Any(d => d.Kind == "videoinput") && !OperatingSystem.IsBrowser())
                 throw new Exception("No video input devices available - cannot test frame capture");
 
+            using var camera = await AcquireTestCamera();
             for (int round = 0; round < 10; round++)
             {
-                var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Video = true });
+                var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Video = camera.Video });
                 var track = stream.GetVideoTracks()[0];
                 if (track is not IVideoTrack videoTrack)
                 {
@@ -124,7 +126,8 @@ namespace SpawnDev.MultiMedia.Demo.Shared.UnitTests
             if (!devices.Any(d => d.Kind == "videoinput") && !OperatingSystem.IsBrowser())
                 throw new Exception("No video input devices available");
 
-            using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Video = true });
+            using var camera = await AcquireTestCamera();
+            using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Video = camera.Video });
             var track = stream.GetVideoTracks()[0];
             if (track is not IVideoTrack videoTrack)
                 return; // Browser tracks don't implement IVideoTrack (no raw frame access)

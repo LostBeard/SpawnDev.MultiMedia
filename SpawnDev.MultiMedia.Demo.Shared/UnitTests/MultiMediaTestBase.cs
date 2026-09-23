@@ -193,7 +193,8 @@ namespace SpawnDev.MultiMedia.Demo.Shared.UnitTests
         [TestMethod]
         public async Task GetUserMedia_VideoOnly_ReturnsStream()
         {
-            using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Video = true });
+            using var camera = await AcquireTestCamera();
+            using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Video = camera.Video });
             if (stream == null) throw new Exception("GetUserMedia returned null");
             var tracks = stream.GetVideoTracks();
             if (tracks.Length == 0) throw new Exception("No video tracks in stream");
@@ -203,7 +204,8 @@ namespace SpawnDev.MultiMedia.Demo.Shared.UnitTests
         [TestMethod]
         public async Task GetUserMedia_VideoOnly_NoAudioTracks()
         {
-            using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Video = true });
+            using var camera = await AcquireTestCamera();
+            using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Video = camera.Video });
             var audioTracks = stream.GetAudioTracks();
             if (audioTracks.Length > 0) throw new Exception($"Video-only stream should have 0 audio tracks, got {audioTracks.Length}");
         }
@@ -211,7 +213,8 @@ namespace SpawnDev.MultiMedia.Demo.Shared.UnitTests
         [TestMethod]
         public async Task GetUserMedia_VideoTrack_GetSettings_HasDimensions()
         {
-            using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Video = true });
+            using var camera = await AcquireTestCamera();
+            using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Video = camera.Video });
             var track = stream.GetVideoTracks()[0];
             var settings = track.GetSettings();
             if (settings.Width == null || settings.Width <= 0)
@@ -225,7 +228,8 @@ namespace SpawnDev.MultiMedia.Demo.Shared.UnitTests
         [TestMethod]
         public async Task GetUserMedia_AudioAndVideo_HasBothTrackTypes()
         {
-            using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Audio = true, Video = true });
+            using var camera = await AcquireTestCamera();
+            using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Audio = true, Video = camera.Video });
             var allTracks = stream.GetTracks();
             if (allTracks.Length < 2) throw new Exception($"Expected at least 2 tracks, got {allTracks.Length}");
             if (stream.GetAudioTracks().Length == 0) throw new Exception("No audio tracks");

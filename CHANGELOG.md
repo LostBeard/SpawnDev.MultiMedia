@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (2026-09-23)
+## 2.3.0 (2026-09-23)
 
 ### Changed - GetUserMedia failures now THROW on desktop and in the browser
 
@@ -24,6 +24,11 @@
 
 - `GetUserMedia_UnknownVideoDeviceId_ThrowsMediaDeviceException`,
   `GetUserMedia_UnknownAudioDeviceId_ThrowsMediaDeviceException` - pass on desktop and in the Wasm lane.
+- The desktop video tests open **OBS Virtual Camera** when it is installed (else the first camera) and take
+  turns on it through a machine-wide semaphore. PlaywrightMultiTest runs 4 desktop test processes at once,
+  and a camera another process is capturing from cannot be opened (DirectShow RenderStream E_INVALIDARG,
+  now `NotReadableError`; measured 3 of 4 concurrent processes fail, 1 process 10/10). The old stub track
+  had been hiding those failures. Full sweep 168/168, three runs in a row.
 - PlaywrightMultiTest: a desktop test process that dies without reporting now fails with its exit code and
   last output (it said only "Test run failed"), and a `PMT_FILTER` / `PMT_LANES` scope that selects no
   tests fails instead of reporting "Passed!". `PMT_LANES` matches test class names
@@ -31,10 +36,10 @@
 
 ### Known issue
 
-- Intermittent desktop crash (access violation, "Internal CLR error 0x80131506") in video-capture tests
-  when the first camera is a Meta Quest Link virtual camera: its DirectShow filter corrupts the process
-  under GC activity (Meta Quest 3/3S/2/Pro crash every stress run; OBS Virtual Camera 0 of 160 sessions).
-  The desktop tests open the first video device.
+- Capturing from a Meta Quest Link virtual camera (Meta Quest 3/3S/2/Pro) through DirectShow can crash the
+  process (access violation, "Internal CLR error 0x80131506") under GC activity: it did on every stress run,
+  while OBS Virtual Camera ran 0 crashes in 160 sessions with the same code. Not yet proven to be inside
+  Meta's filter rather than our graph usage. The tests avoid it by preferring OBS.
 
 ## 0.2.0 (2026-04-25 stable)
 
