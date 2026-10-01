@@ -49,8 +49,9 @@ namespace SpawnDev.MultiMedia.Windows
         }
 
         public event Action? OnEnded;
-        public event Action? OnMute;
-        public event Action? OnUnmute;
+        // Desktop capture has no mute signal: these never fire.
+        public event Action? OnMute { add { } remove { } }
+        public event Action? OnUnmute { add { } remove { } }
         public event Action<VideoFrame>? OnFrame;
 
         private WindowsDisplayTrack(string label)
@@ -85,7 +86,7 @@ namespace SpawnDev.MultiMedia.Windows
             {
                 // Navigate: D3D11 Device -> DXGI Device -> DXGI Adapter -> DXGI Output -> DXGI Output1
                 var dxgiDeviceIid = DXGI.IID_IDXGIDevice;
-                hr = Marshal.QueryInterface(track._d3dDevice, ref dxgiDeviceIid, out var dxgiDevicePtr);
+                hr = Marshal.QueryInterface(track._d3dDevice, in dxgiDeviceIid, out var dxgiDevicePtr);
                 MF.ThrowOnFailure(hr);
 
                 var dxgiDevice = (IDXGIDevice)Marshal.GetObjectForIUnknown(dxgiDevicePtr);
@@ -117,7 +118,7 @@ namespace SpawnDev.MultiMedia.Windows
                             var outputPtr = Marshal.GetIUnknownForObject(outputObj);
                             try
                             {
-                                hr = Marshal.QueryInterface(outputPtr, ref output1Iid, out var output1Ptr);
+                                hr = Marshal.QueryInterface(outputPtr, in output1Iid, out var output1Ptr);
                                 MF.ThrowOnFailure(hr);
 
                                 var output1 = (IDXGIOutput1)Marshal.GetObjectForIUnknown(output1Ptr);
@@ -225,7 +226,7 @@ namespace SpawnDev.MultiMedia.Windows
                             var resourcePtr = Marshal.GetIUnknownForObject(resourceObj);
                             try
                             {
-                                hr = Marshal.QueryInterface(resourcePtr, ref texIid, out var texturePtr);
+                                hr = Marshal.QueryInterface(resourcePtr, in texIid, out var texturePtr);
                                 if (hr >= 0)
                                 {
                                     try

@@ -1,5 +1,25 @@
 # Changelog
 
+## 2.4.0 (2026-10-01)
+
+### Changed - SpawnDev.SpawnJS 3.0.0 + SpawnDev.ILGPU 5.3.0
+
+- **SpawnDev.SpawnJS 2.1.18 -> 3.0.0** (one-crossing marshaller) and **SpawnDev.ILGPU 5.2.16 -> 5.3.0** (built on
+  SpawnJS 3). Minor bump: a consumer pinning SpawnJS 2.x now gets NU1605.
+- **The browser test app no longer runs on SpawnDev.BlazorJS.** `SpawnDev.MultiMedia.Demo` booted with
+  `AddBlazorJSRuntime()` and the tests used `SpawnDev.UnitTesting.Blazor` (which depends on BlazorJS), so the Wasm
+  lane ran two interop runtimes side by side. Now `AddSpawnJSRuntime()` + `SpawnDev.UnitTesting.Browser`, the same
+  as SpawnDev.RTC. CameraPreview sets `<video>.srcObject` through `ElementReference.As<HTMLVideoElement>()`
+  (SpawnDev.SpawnJS.Blazor **3.0.1** - porting this page found that `As<T>()` threw NullReferenceException in every
+  published app; fixed there). Verified in Chromium with a fake camera: Start attaches a live stream, Stop clears it.
+- **The library builds with 0 warnings.** `Browser*` classes are `[SupportedOSPlatform("browser")]` (as in SpawnDev.RTC);
+  `JpegDecodeResult` arrays initialized; `in` for `Marshal.QueryInterface`; the desktop tracks' `OnMute` / `OnUnmute`
+  are explicit no-op events (desktop capture has no mute signal, they never fired).
+
+### Tests
+
+- PlaywrightMultiTest 168/168 (desktop 83 + Wasm 83 + 2), the Wasm lane on SpawnJS 3.0.0 + ILGPU 5.3.0.
+
 ## 2.3.0 (2026-09-23)
 
 ### Changed - GetUserMedia failures now THROW on desktop and in the browser

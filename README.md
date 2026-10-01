@@ -82,7 +82,7 @@ foreach (var device in devices)
 
 | Platform | Video Capture | Audio Capture | Audio Playback | Notes |
 |----------|--------------|---------------|----------------|-------|
-| Browser (Blazor WASM) | `navigator.mediaDevices` via [SpawnDev.BlazorJS](https://github.com/LostBeard/SpawnDev.BlazorJS) | Same | HTML audio element | Feature-complete |
+| Browser (Blazor WASM) | `navigator.mediaDevices` via [SpawnDev.SpawnJS](https://github.com/LostBeard/SpawnDev.SpawnJS) | Same | HTML audio element | Feature-complete |
 | Windows | MediaFoundation + DirectShow (P/Invoke) | WASAPI (P/Invoke) | WASAPI (P/Invoke) | Feature-complete; H.264 encoding via MediaFoundation MFT |
 | Linux | Not yet (V4L2 P/Invoke planned) | Not yet (PulseAudio / ALSA P/Invoke planned) | Not yet | Device enumeration works; see [Docs/linux.md](Docs/linux.md) |
 | macOS | Phase 5 (AVFoundation) | Phase 5 (CoreAudio) | Phase 5 | Planned |
@@ -93,7 +93,7 @@ Licensed under the MIT License. See [LICENSE.txt](LICENSE.txt) for details.
 
 ## Built With
 
-- [SpawnDev.BlazorJS](https://github.com/LostBeard/SpawnDev.BlazorJS) - Typed C# wrappers for browser APIs
+- [SpawnDev.SpawnJS](https://github.com/LostBeard/SpawnDev.SpawnJS) - Typed C# wrappers for browser APIs
 - [SpawnDev.ILGPU](https://github.com/LostBeard/SpawnDev.ILGPU) - GPU-accelerated pixel format conversion
 
 ## 🖖 The SpawnDev Crew

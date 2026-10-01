@@ -1,7 +1,6 @@
 @page "/camera"
 @using SpawnDev.MultiMedia.Browser
-@using SpawnDev.BlazorJS
-@using SpawnDev.BlazorJS.JSObjects
+@using SpawnDev.SpawnJS.JSObjects
 
 <PageTitle>Camera Preview</PageTitle>
 
@@ -63,13 +62,11 @@
                     Audio = false,
                 });
 
-            // Attach the native MediaStream to the video element via BlazorJS
+            // Attach the native MediaStream to the video element via SpawnJS
             if (_stream is BrowserMediaStream browserStream)
             {
-                var JS = BlazorJSRuntime.JS;
-                var jsRef = JS.ToJSRef(_videoRef);
-                using var videoEl = new JSObject(jsRef);
-                videoEl.JSRef!.Set("srcObject", browserStream.NativeStream);
+                using var videoEl = _videoRef.As<HTMLVideoElement>();
+                videoEl.SrcObject = browserStream.NativeStream;
             }
 
             var tracks = _stream.GetVideoTracks();
@@ -93,10 +90,8 @@
             // Clear video element srcObject
             try
             {
-                var JS = BlazorJSRuntime.JS;
-                var jsRef = JS.ToJSRef(_videoRef);
-                using var videoEl = new JSObject(jsRef);
-                videoEl.JSRef!.Set("srcObject", (object?)null);
+                using var videoEl = _videoRef.As<HTMLVideoElement>();
+                videoEl.SrcObject = null;
             }
             catch { }
 

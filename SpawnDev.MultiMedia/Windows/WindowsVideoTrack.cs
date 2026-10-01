@@ -56,8 +56,9 @@ namespace SpawnDev.MultiMedia.Windows
         }
 
         public event Action? OnEnded;
-        public event Action? OnMute;
-        public event Action? OnUnmute;
+        // Desktop capture has no mute signal: these never fire.
+        public event Action? OnMute { add { } remove { } }
+        public event Action? OnUnmute { add { } remove { } }
         public event Action<VideoFrame>? OnFrame;
 
         private VideoPixelFormat _outputFormat = VideoPixelFormat.BGRA;

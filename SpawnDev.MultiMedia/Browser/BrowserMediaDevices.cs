@@ -7,6 +7,7 @@ namespace SpawnDev.MultiMedia.Browser
     /// Browser implementation of media device access.
     /// Wraps navigator.mediaDevices via SpawnDev.SpawnJS.
     /// </summary>
+    [System.Runtime.Versioning.SupportedOSPlatform("browser")]
     public static class BrowserMediaDevices
     {
         public static async Task<IMediaStream> GetUserMedia(MediaStreamConstraints constraints)

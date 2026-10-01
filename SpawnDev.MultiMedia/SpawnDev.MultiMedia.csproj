@@ -4,8 +4,8 @@
 		<TargetFramework>net10.0</TargetFramework>
 		<ImplicitUsings>enable</ImplicitUsings>
 		<Nullable>enable</Nullable>
-		<Version>2.3.0</Version>
-		<PackageReleaseNotes>v2.3.0 - GetUserMedia failures now throw MediaDeviceException (Name: NotFoundError / NotReadableError / the browser error name; Kind; InnerException) on desktop AND browser. Desktop used to return a stub "No Camera Found" / "No Audio Input Found" track. DeviceId is exact on both platforms. Desktop video falls through Media Foundation, DirectShow and the next device; a half-built track is released. SpawnJS 2.1.18, ILGPU 5.2.16.</PackageReleaseNotes>
+		<Version>2.4.0</Version>
+		<PackageReleaseNotes>v2.4.0 - SpawnDev.SpawnJS 3.0.0 + SpawnDev.ILGPU 5.3.0. The browser test app runs on SpawnJS (SpawnDev.UnitTesting.Browser) instead of SpawnDev.BlazorJS.</PackageReleaseNotes>
 		<GeneratePackageOnBuild>True</GeneratePackageOnBuild>
 		<GenerateDocumentationFile>true</GenerateDocumentationFile>
 		<EmbedAllSources>true</EmbedAllSources>
@@ -30,8 +30,8 @@
 
 	<ItemGroup>
 		<PackageReference Include="Microsoft.AspNetCore.Components.Web" Version="10.0.2" />
-		<PackageReference Include="SpawnDev.SpawnJS" Version="2.1.18" />
-		<PackageReference Include="SpawnDev.ILGPU" Version="5.2.16" />
+		<PackageReference Include="SpawnDev.SpawnJS" Version="3.0.0" />
+		<PackageReference Include="SpawnDev.ILGPU" Version="5.3.0" />
 	</ItemGroup>
 
 	<ItemGroup>

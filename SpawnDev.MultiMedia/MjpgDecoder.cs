@@ -408,14 +408,14 @@ namespace SpawnDev.MultiMedia
     {
         public int Width, Height;
         public int ComponentCount;
-        public JpegComponentInfo[] Components;
+        public JpegComponentInfo[] Components = Array.Empty<JpegComponentInfo>();
         public int MaxHSamp, MaxVSamp;
         public int McuWidth, McuHeight;
         public int McuCountX, McuCountY;
         public int BlocksPerMcu;
 
         /// <summary>Quantization tables [tableId][64 values]. NOT yet applied to coefficients.</summary>
-        public int[][] QuantTables;
+        public int[][] QuantTables = Array.Empty<int[]>();
 
         /// <summary>
         /// Flat DCT coefficient array: [totalBlocks * 64].
@@ -423,16 +423,16 @@ namespace SpawnDev.MultiMedia
         /// These are raw Huffman-decoded values - NOT dequantized.
         /// Dequantization (multiply by quant table) is a kernel operation.
         /// </summary>
-        public int[] DctCoefficients;
+        public int[] DctCoefficients = Array.Empty<int>();
 
         /// <summary>Which component index each block within an MCU belongs to.</summary>
-        public int[] BlockComponentIndex;
+        public int[] BlockComponentIndex = Array.Empty<int>();
         /// <summary>Horizontal position within component's sampling grid.</summary>
-        public int[] BlockHIndex;
+        public int[] BlockHIndex = Array.Empty<int>();
         /// <summary>Vertical position within component's sampling grid.</summary>
-        public int[] BlockVIndex;
+        public int[] BlockVIndex = Array.Empty<int>();
         /// <summary>Which quant table each block uses.</summary>
-        public int[] BlockQuantTableId;
+        public int[] BlockQuantTableId = Array.Empty<int>();
 
         public int TotalBlocks => McuCountX * McuCountY * BlocksPerMcu;
     }

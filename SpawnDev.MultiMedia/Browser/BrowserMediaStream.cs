@@ -6,6 +6,7 @@ namespace SpawnDev.MultiMedia.Browser
     /// Browser implementation of IMediaStream.
     /// Wraps the native browser MediaStream via SpawnDev.SpawnJS.
     /// </summary>
+    [System.Runtime.Versioning.SupportedOSPlatform("browser")]
     public class BrowserMediaStream : IMediaStream
     {
         /// <summary>

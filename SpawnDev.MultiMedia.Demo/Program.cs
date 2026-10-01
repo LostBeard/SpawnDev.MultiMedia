@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Components.Web;
 using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
-using SpawnDev.BlazorJS;
+using SpawnDev;
+using SpawnDev.SpawnJS;
 using SpawnDev.MultiMedia.Demo;
 using SpawnDev.MultiMedia.Demo.UnitTests;
 
@@ -13,7 +14,7 @@ Console.WriteLine($"SpawnDev.MultiMedia.Demo build: {buildTimestamp}");
 
 var builder = WebAssemblyHostBuilder.CreateDefault(args);
 
-builder.Services.AddBlazorJSRuntime();
+builder.Services.AddSpawnJSRuntime();
 
 // Unit tests
 builder.Services.AddSingleton<WasmMultiMediaTests>();
@@ -23,4 +24,8 @@ builder.Services.AddScoped(sp => new HttpClient { BaseAddress = new Uri(builder.
 builder.RootComponents.Add<App>("#app");
 builder.RootComponents.Add<HeadOutlet>("head::after");
 
-await builder.Build().BlazorJSRunAsync();
+var host = builder.Build();
+
+await host.Services.StartBackgroundServices();
+
+await host.RunAsync();
