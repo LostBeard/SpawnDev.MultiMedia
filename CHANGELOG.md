@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.5.0 (2026-11-03)
+
+### Added
+- **H.264 decoding (desktop): `IVideoDecoder`** over the Media Foundation H.264 Decoder MFT, NV12 out. Round-trip tests encode with
+  the library's own H.264 encoder and decode back. SpawnDev.RTC 2.4.0's `IRTCVideoReceiver` decodes received video with it.
+
+### Changed
+- SpawnDev.SpawnJS 3.0.0 -> 3.0.7, SpawnDev.ILGPU 5.3.0 -> 5.4.15 (demo: SpawnDev.SpawnJS.Blazor 3.0.1 -> 3.0.7).
+
+### Tests
+- PlaywrightMultiTest (RTX 4070, Chrome 156): 172 passed, 0 failed, 0 skipped (2.4.0: 168; the 4 new are the H.264 round trips).
+
 ## 2.4.0 (2026-10-01)
 
 ### Changed - SpawnDev.SpawnJS 3.0.0 + SpawnDev.ILGPU 5.3.0
