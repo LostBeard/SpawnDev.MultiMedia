@@ -44,6 +44,21 @@ namespace SpawnDev.MultiMedia.Demo.Shared.UnitTests
             }
         }
 
+        /// <summary>Whether the camera opens (a stream is made and stopped at once).</summary>
+        static async Task<bool> Opens(string deviceId)
+        {
+            try
+            {
+                using var stream = await MediaDevices.GetUserMedia(new MediaStreamConstraints { Video = new MediaTrackConstraints { DeviceId = deviceId } });
+                foreach (var track in stream.GetTracks()) track.Stop();
+                return true;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
         protected static async Task<TestCameraLease> AcquireTestCamera()
         {
             if (OperatingSystem.IsBrowser()) return new TestCameraLease(true, null);
@@ -58,8 +73,12 @@ namespace SpawnDev.MultiMedia.Demo.Shared.UnitTests
                     semaphore = null;
                 }
             }
-            var obs = (await MediaDevices.EnumerateDevices())
-                .FirstOrDefault(d => d.Kind == "videoinput" && d.Label.Contains(PreferredTestCamera, StringComparison.OrdinalIgnoreCase));
+            var cameras = (await MediaDevices.EnumerateDevices()).Where(d => d.Kind == "videoinput").ToList();
+            var obs = cameras.FirstOrDefault(d => d.Label.Contains(PreferredTestCamera, StringComparison.OrdinalIgnoreCase));
+            // OBS Virtual Camera is listed whenever OBS is installed but only opens while OBS runs its virtual camera: if it will not open, use
+            // the first other camera (a plugged-in webcam) instead of failing every video test on a machine where OBS is not running.
+            if (obs != null && !await Opens(obs.DeviceId))
+                obs = cameras.FirstOrDefault(d => d != obs && !d.Label.Contains(PreferredTestCamera, StringComparison.OrdinalIgnoreCase));
             MediaConstraint video = obs != null ? new MediaTrackConstraints { DeviceId = obs.DeviceId } : true;
             return new TestCameraLease(video, semaphore);
         }

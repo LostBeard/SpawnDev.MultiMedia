@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Tests
+- The desktop video tests' camera: OBS Virtual Camera stays preferred, but when it will not open (OBS installed, its virtual camera not
+  started) the first other camera is used instead of failing every video test. PlaywrightMultiTest on NV1080 (Radeon RX 590, a USB camera):
+  180 passed, 0 failed (2.6.0 there: 173 / 7, the 7 being this).
+
 ## 2.6.0 (2026-11-18)
 
 ### Added
