@@ -268,6 +268,10 @@ namespace PlaywrightMultiTest
                             new BrowserTypeLaunchPersistentContextOptions
                             {
                                 Headless = false,
+                                // The test server is this runner's own https://localhost with the .NET dev certificate, which only machines that
+                                // ran `dotnet dev-certs https --trust` accept (on others Chrome stops at ERR_CERT_AUTHORITY_INVALID and no browser
+                                // test runs). localhost stays a secure context, so WebGPU and the media APIs are unaffected.
+                                IgnoreHTTPSErrors = true,
                                 // Installed Chrome by DEFAULT, not Playwright's bundled Chromium: the
                                 // bundled build only ever exposes the SwiftShader SOFTWARE WebGPU
                                 // adapter on this machine (vendor=google arch=swiftshader

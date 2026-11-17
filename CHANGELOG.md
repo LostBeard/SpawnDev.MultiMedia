@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.6.0 (unreleased; 2.6.0-local.1 on the local feed, 2026-11-18)
+## 2.6.0 (2026-11-18)
 
 ### Added
 - **H.264 rate control**: `H264EncoderOptions` (`RateControl`: `ConstantBitrate`, `Quality` 1..100, `ConstantQp` 0..51) and
@@ -21,8 +21,11 @@
 - SpawnDev.SpawnJS 3.0.7 -> 3.0.10, SpawnDev.ILGPU 5.4.15 -> 5.4.36 (demo: SpawnDev.SpawnJS.Blazor 3.0.7 -> 3.0.8).
 
 ### Tests
-- Desktop (DemoConsole, NV1080, RX 590): 82 passed; the 7 video-capture tests fail here because OBS Virtual Camera is installed but not running
-  (the unmodified 2.5.0 fails them the same way). New: limited-range black / white exact, BGRA -> NV12 round trips (<= 2 levels on 2 x 2
+- PlaywrightMultiTest (NV1080: Radeon RX 590, installed Chrome): 173 passed, 7 failed of 180 (2.5.0: 172 on Yoda). The 7 are the desktop
+  video-capture tests: OBS Virtual Camera is installed on NV1080 but not running, and the unmodified 2.5.0 fails them the same way here.
+  Every browser test passed (the browser's WebGPU adapter was not logged by the run).
+- PlaywrightMultiTest now ignores certificate errors for its own https://localhost test server: on a machine without a trusted .NET dev
+  certificate Chrome stopped at ERR_CERT_AUTHORITY_INVALID and no browser test ran. New: limited-range black / white exact, BGRA -> NV12 round trips (<= 2 levels on 2 x 2
   constant colours, <= 4 on a gradient), constant QP and quality monotonic.
 
 ## 2.5.0 (2026-11-03)
