@@ -78,7 +78,7 @@ namespace SpawnDev.MultiMedia.Demo.Shared.UnitTests
         [TestMethod]
         public async Task PixelConvert_NV12toBGRA_WhitePixel()
         {
-            // White in YUV: Y=235, U=128, V=128
+            // White in video-range YUV: Y=235, U=128, V=128 (BT.601 limited range: R = G = B = 255)
             int w = 2, h = 2;
             var nv12 = new byte[w * h * 3 / 2]; // 6 bytes
             nv12[0] = nv12[1] = nv12[2] = nv12[3] = 235; // Y
@@ -87,11 +87,11 @@ namespace SpawnDev.MultiMedia.Demo.Shared.UnitTests
             var bgra = new byte[w * h * 4]; // 16 bytes
             PixelFormatConverter.NV12toBGRA(nv12, bgra, w, h);
 
-            // Should be near-white: R,G,B all close to 235
+            // White: R,G,B = 255 (before 2.6.0 the full-range decode gave 235 and this test accepted >= 220)
             for (int p = 0; p < w * h; p++)
             {
                 int b = bgra[p * 4], g = bgra[p * 4 + 1], r = bgra[p * 4 + 2], a = bgra[p * 4 + 3];
-                if (r < 220 || g < 220 || b < 220)
+                if (r != 255 || g != 255 || b != 255)
                     throw new Exception($"Pixel {p} not white enough: R={r} G={g} B={b}");
                 if (a != 255) throw new Exception($"Alpha should be 255, got {a}");
             }

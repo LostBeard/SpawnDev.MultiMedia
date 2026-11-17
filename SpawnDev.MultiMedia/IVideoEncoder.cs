@@ -10,7 +10,7 @@ namespace SpawnDev.MultiMedia
     /// - Linux VAAPI + macOS VideoToolbox planned for Phase 5
     /// - Browser uses native WebRTC stack directly; no <c>IVideoEncoder</c> impl there
     ///
-    /// Factory: <see cref="VideoEncoderFactory.CreateH264"/> picks the right platform
+    /// Factory: <see cref="VideoEncoderFactory.CreateH264(int, int, int, int)"/> picks the right platform
     /// implementation at runtime.
     /// </summary>
     public interface IVideoEncoder : IDisposable
@@ -62,8 +62,40 @@ namespace SpawnDev.MultiMedia
     /// Factory for platform-appropriate <see cref="IVideoEncoder"/> implementations.
     /// Dispatches via <see cref="OperatingSystem"/> checks at runtime.
     /// </summary>
+    /// <summary>How an H.264 encoder spends bits.</summary>
+    public enum H264RateControl
+    {
+        /// <summary>A constant bitrate (<see cref="H264EncoderOptions.BitrateBps"/>): steady for real-time streaming (WebRTC).</summary>
+        ConstantBitrate,
+        /// <summary>A constant quality, 1 (lowest) to 100 (<see cref="H264EncoderOptions.Quality"/>), whatever the bitrate.</summary>
+        Quality,
+        /// <summary>A fixed quantizer, 0 (finest) to 51 (<see cref="H264EncoderOptions.Qp"/>), for every frame: the closest to x264's CRF.</summary>
+        ConstantQp,
+    }
+
+    /// <summary>An H.264 encoder's settings. The default rate control is a constant bitrate, as <see cref="VideoEncoderFactory.CreateH264(int, int, int, int)"/>.</summary>
+    public sealed record H264EncoderOptions(int Width, int Height, int FrameRate, int BitrateBps)
+    {
+        public H264RateControl RateControl { get; init; } = H264RateControl.ConstantBitrate;
+        /// <summary>1..100, for <see cref="H264RateControl.Quality"/>.</summary>
+        public int Quality { get; init; } = 70;
+        /// <summary>0..51, for <see cref="H264RateControl.ConstantQp"/>.</summary>
+        public int Qp { get; init; } = 26;
+    }
+
     public static class VideoEncoderFactory
     {
+        /// <summary>An H.264 encoder with <paramref name="options"/> (rate control: constant bitrate, quality or constant QP).</summary>
+        public static IVideoEncoder CreateH264(H264EncoderOptions options)
+        {
+            if (OperatingSystem.IsWindows())
+                return new Windows.WindowsH264Encoder(options);
+
+            throw new PlatformNotSupportedException(
+                $"H.264 encoder is not yet implemented for {System.Runtime.InteropServices.RuntimeInformation.OSDescription}. " +
+                "Windows ships via MediaFoundation MFT today; Linux VAAPI and macOS VideoToolbox are planned as Phase 5.");
+        }
+
         /// <summary>
         /// Create a platform-default H.264 encoder. Currently Windows-only (MediaFoundation
         /// H.264 Encoder MFT). Throws <see cref="PlatformNotSupportedException"/> on other

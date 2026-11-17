@@ -17,6 +17,12 @@ namespace SpawnDev.MultiMedia.Windows
             _mft = new H264EncoderMFT(width, height, fps, bitrateBps);
         }
 
+        /// <summary>An encoder with the rate control in <paramref name="options"/> (constant bitrate, quality or constant QP).</summary>
+        public WindowsH264Encoder(H264EncoderOptions options)
+        {
+            _mft = new H264EncoderMFT(options);
+        }
+
         public string Codec => "h264";
         public int Width => _mft.Width;
         public int Height => _mft.Height;

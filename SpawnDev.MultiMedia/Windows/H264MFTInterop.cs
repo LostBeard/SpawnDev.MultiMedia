@@ -46,6 +46,20 @@ namespace SpawnDev.MultiMedia.Windows
         public static readonly Guid CODECAPI_AVEncCommonMeanBitRate =
             new("F7222374-2144-4815-B550-A37F8E12EE52");
 
+        // Quality / QP rate control (codecapi.h, Windows SDK 10.0.26100: STATIC_CODECAPI_AVEncCommonQuality, ..._AVEncVideoEncodeQP,
+        // ..._AVEncVideoMinQP, ..._AVEncVideoMaxQP).
+        public static readonly Guid CODECAPI_AVEncCommonQuality =
+            new("FCBF57A3-7EA5-4B0C-9644-69B40C39C391");
+
+        public static readonly Guid CODECAPI_AVEncVideoEncodeQP =
+            new("2CB5696B-23FB-4CE1-A0F9-EF5B90FD55CA");
+
+        public static readonly Guid CODECAPI_AVEncVideoMinQP =
+            new("0EE22C6A-A37C-4568-B5F1-9D4C2B3AB886");
+
+        public static readonly Guid CODECAPI_AVEncVideoMaxQP =
+            new("3DAF6F66-A6A7-45E0-A8E5-F2743F46A3A2");
+
         // MPEG-2 profile (also used for H.264 via MF_MT_MPEG2_PROFILE).
         public const uint eAVEncH264VProfile_Base = 66;  // Baseline - widest browser interop
         public const uint eAVEncH264VProfile_Main = 77;
@@ -55,8 +69,11 @@ namespace SpawnDev.MultiMedia.Windows
         public const uint MFVideoInterlace_Progressive = 2;
 
         // Rate control modes.
+        // eAVEncCommonRateControlMode (codecapi.h). Quality was 2 here until 2.6.0: 2 is UnconstrainedVBR (it was never used).
         public const uint eAVEncCommonRateControlMode_CBR = 0;
-        public const uint eAVEncCommonRateControlMode_Quality = 2;
+        public const uint eAVEncCommonRateControlMode_PeakConstrainedVBR = 1;
+        public const uint eAVEncCommonRateControlMode_UnconstrainedVBR = 2;
+        public const uint eAVEncCommonRateControlMode_Quality = 3;
 
         // IMFTransform.ProcessOutput flags.
         public const uint MFT_PROCESS_OUTPUT_DISCARD_WHEN_NO_BUFFER = 1;

@@ -4,8 +4,8 @@
 		<TargetFramework>net10.0</TargetFramework>
 		<ImplicitUsings>enable</ImplicitUsings>
 		<Nullable>enable</Nullable>
-		<Version>2.5.0</Version>
-		<PackageReleaseNotes>v2.5.0 - H.264 decoding: IVideoDecoder + the Media Foundation H.264 decoder (NV12 out) on desktop. SpawnDev.SpawnJS 3.0.7, SpawnDev.ILGPU 5.4.15. v2.4.0 - SpawnDev.SpawnJS 3.0.0 + SpawnDev.ILGPU 5.3.0. The browser test app runs on SpawnJS (SpawnDev.UnitTesting.Browser) instead of SpawnDev.BlazorJS.</PackageReleaseNotes>
+		<Version>2.6.0-local.1</Version>
+		<PackageReleaseNotes>v2.6.0 - H.264 rate control: constant QP and quality besides constant bitrate (H264EncoderOptions); YUV to RGB conversions now BT.601 limited range (they decoded video-range YUV as full range: washed-out colours); BGRA / RGB24 / I420 to NV12. SpawnDev.SpawnJS 3.0.10, SpawnDev.ILGPU 5.4.36. v2.5.0 - H.264 decoding: IVideoDecoder + the Media Foundation H.264 decoder (NV12 out) on desktop. SpawnDev.SpawnJS 3.0.7, SpawnDev.ILGPU 5.4.15. v2.4.0 - SpawnDev.SpawnJS 3.0.0 + SpawnDev.ILGPU 5.3.0. The browser test app runs on SpawnJS (SpawnDev.UnitTesting.Browser) instead of SpawnDev.BlazorJS.</PackageReleaseNotes>
 		<GeneratePackageOnBuild>True</GeneratePackageOnBuild>
 		<GenerateDocumentationFile>true</GenerateDocumentationFile>
 		<EmbedAllSources>true</EmbedAllSources>
@@ -30,8 +30,8 @@
 
 	<ItemGroup>
 		<PackageReference Include="Microsoft.AspNetCore.Components.Web" Version="10.0.2" />
-		<PackageReference Include="SpawnDev.SpawnJS" Version="3.0.7" />
-		<PackageReference Include="SpawnDev.ILGPU" Version="5.4.15" />
+		<PackageReference Include="SpawnDev.SpawnJS" Version="3.0.10" />
+		<PackageReference Include="SpawnDev.ILGPU" Version="5.4.36" />
 	</ItemGroup>
 
 	<ItemGroup>

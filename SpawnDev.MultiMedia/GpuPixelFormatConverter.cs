@@ -179,9 +179,9 @@ namespace SpawnDev.MultiMedia
             int u = src[ySize + uvRow * width + uvCol * 2] - 128;
             int v = src[ySize + uvRow * width + uvCol * 2 + 1] - 128;
 
-            int r = Clamp(yVal + (int)(1.402f * v));
-            int g = Clamp(yVal - (int)(0.344f * u) - (int)(0.714f * v));
-            int b = Clamp(yVal + (int)(1.772f * u));
+            int r = Bt601.R(yVal, v);
+            int g = Bt601.G(yVal, u, v);
+            int b = Bt601.B(yVal, u);
 
             int px = index * 4;
             dst[px] = (byte)b;
@@ -203,9 +203,9 @@ namespace SpawnDev.MultiMedia
             int u = src[ySize + (y / 2) * uvWidth + (x / 2)] - 128;
             int v = src[ySize + uvSize + (y / 2) * uvWidth + (x / 2)] - 128;
 
-            int r = Clamp(yVal + (int)(1.402f * v));
-            int g = Clamp(yVal - (int)(0.344f * u) - (int)(0.714f * v));
-            int b = Clamp(yVal + (int)(1.772f * u));
+            int r = Bt601.R(yVal, v);
+            int g = Bt601.G(yVal, u, v);
+            int b = Bt601.B(yVal, u);
 
             int px = index * 4;
             dst[px] = (byte)b;
@@ -224,16 +224,22 @@ namespace SpawnDev.MultiMedia
             int uvSize = uvWidth * (height / 2);
 
             int px = index * 4;
-            int b = src[px], g = src[px + 1], r = src[px + 2];
+            dst[y * width + x] = (byte)Bt601.Y(src[px + 2], src[px + 1], src[px]);
 
-            dst[y * width + x] = (byte)Clamp((int)(0.257f * r + 0.504f * g + 0.098f * b) + 16);
-
-            // Only one thread per 2x2 block writes U/V
+            // One thread per 2x2 block writes U/V, from the block's average colour (as the CPU converter)
             if ((x & 1) == 0 && (y & 1) == 0)
             {
+                float r = 0, g = 0, b = 0;
+                for (int dy = 0; dy < 2; dy++)
+                    for (int dx = 0; dx < 2; dx++)
+                    {
+                        int q = ((y + dy) * width + x + dx) * 4;
+                        r += src[q + 2]; g += src[q + 1]; b += src[q];
+                    }
+                r *= 0.25f; g *= 0.25f; b *= 0.25f;
                 int uvIdx = (y / 2) * uvWidth + (x / 2);
-                dst[ySize + uvIdx] = (byte)Clamp((int)(-0.148f * r - 0.291f * g + 0.439f * b) + 128);
-                dst[ySize + uvSize + uvIdx] = (byte)Clamp((int)(0.439f * r - 0.368f * g - 0.071f * b) + 128);
+                dst[ySize + uvIdx] = (byte)Bt601.U(r, g, b);
+                dst[ySize + uvSize + uvIdx] = (byte)Bt601.V(r, g, b);
             }
         }
 
@@ -275,15 +281,15 @@ namespace SpawnDev.MultiMedia
 
             int x = macroX * 2;
             int px0 = (macroY * width + x) * 4;
-            dst[px0] = (byte)Clamp(y0 + (int)(1.772f * u));
-            dst[px0 + 1] = (byte)Clamp(y0 - (int)(0.344f * u) - (int)(0.714f * v));
-            dst[px0 + 2] = (byte)Clamp(y0 + (int)(1.402f * v));
+            dst[px0] = (byte)Bt601.B(y0, u);
+            dst[px0 + 1] = (byte)Bt601.G(y0, u, v);
+            dst[px0 + 2] = (byte)Bt601.R(y0, v);
             dst[px0 + 3] = 255;
 
             int px1 = px0 + 4;
-            dst[px1] = (byte)Clamp(y1 + (int)(1.772f * u));
-            dst[px1 + 1] = (byte)Clamp(y1 - (int)(0.344f * u) - (int)(0.714f * v));
-            dst[px1 + 2] = (byte)Clamp(y1 + (int)(1.402f * v));
+            dst[px1] = (byte)Bt601.B(y1, u);
+            dst[px1 + 1] = (byte)Bt601.G(y1, u, v);
+            dst[px1 + 2] = (byte)Bt601.R(y1, v);
             dst[px1 + 3] = 255;
         }
 

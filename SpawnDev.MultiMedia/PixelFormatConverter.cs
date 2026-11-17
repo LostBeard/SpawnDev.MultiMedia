@@ -50,6 +50,15 @@ namespace SpawnDev.MultiMedia
                 case (VideoPixelFormat.BGRA, VideoPixelFormat.I420):
                     BGRAtoI420(src, dst, width, height);
                     break;
+                case (VideoPixelFormat.BGRA, VideoPixelFormat.NV12):
+                    BGRAtoNV12(src, dst, width, height);
+                    break;
+                case (VideoPixelFormat.RGB24, VideoPixelFormat.NV12):
+                    RGB24toNV12(src, dst, width, height);
+                    break;
+                case (VideoPixelFormat.I420, VideoPixelFormat.NV12):
+                    I420toNV12(src, dst, width, height);
+                    break;
                 case (VideoPixelFormat.YUY2, VideoPixelFormat.I420):
                     YUY2toI420(src, dst, width, height);
                     break;
@@ -110,8 +119,7 @@ namespace SpawnDev.MultiMedia
         }
 
         /// <summary>
-        /// NV12 -> BGRA: YUV to RGB color space conversion.
-        /// BT.601 standard coefficients.
+        /// NV12 -> BGRA: YUV to RGB, BT.601 limited ("video") range: Y 16..235, U / V 16..240 (as cameras and H.264 decoders give it).
         /// </summary>
         public static void NV12toBGRA(ReadOnlySpan<byte> src, Span<byte> dst, int width, int height)
         {
@@ -128,9 +136,9 @@ namespace SpawnDev.MultiMedia
                     int u = uvSrc[uvRow * width + uvCol * 2] - 128;
                     int v = uvSrc[uvRow * width + uvCol * 2 + 1] - 128;
 
-                    int r = Clamp(y + (int)(1.402 * v));
-                    int g = Clamp(y - (int)(0.344 * u) - (int)(0.714 * v));
-                    int b = Clamp(y + (int)(1.772 * u));
+                    int r = Bt601.R(y, v);
+                    int g = Bt601.G(y, u, v);
+                    int b = Bt601.B(y, u);
 
                     int px = (j * width + i) * 4;
                     dst[px] = (byte)b;
@@ -162,9 +170,9 @@ namespace SpawnDev.MultiMedia
                     int u = uPlane[uvRow * uvWidth + uvCol] - 128;
                     int v = vPlane[uvRow * uvWidth + uvCol] - 128;
 
-                    int r = Clamp(y + (int)(1.402 * v));
-                    int g = Clamp(y - (int)(0.344 * u) - (int)(0.714 * v));
-                    int b = Clamp(y + (int)(1.772 * u));
+                    int r = Bt601.R(y, v);
+                    int g = Bt601.G(y, u, v);
+                    int b = Bt601.B(y, u);
 
                     int px = (j * width + i) * 4;
                     dst[px] = (byte)b;
@@ -176,34 +184,59 @@ namespace SpawnDev.MultiMedia
         }
 
         /// <summary>
-        /// BGRA -> I420: RGB to YUV 4:2:0 planar.
+        /// BGRA -> I420: RGB to YUV 4:2:0 planar, BT.601 limited range, rounded; each U / V from the average of its 2 x 2 block's colours.
         /// </summary>
-        public static void BGRAtoI420(ReadOnlySpan<byte> src, Span<byte> dst, int width, int height)
-        {
-            int ySize = width * height;
-            int uvWidth = width / 2;
-            int uvPlaneSize = uvWidth * (height / 2);
-            var yDst = dst;
-            var uDst = dst.Slice(ySize);
-            var vDst = dst.Slice(ySize + uvPlaneSize);
+        public static void BGRAtoI420(ReadOnlySpan<byte> src, Span<byte> dst, int width, int height) =>
+            BGRAtoYuv420(src, 4, 0, 2, dst, width, height, interleavedChroma: false);
 
+        /// <summary>BGRA -> NV12 (the H.264 encoder's input): as <see cref="BGRAtoI420"/>, U / V interleaved.</summary>
+        public static void BGRAtoNV12(ReadOnlySpan<byte> src, Span<byte> dst, int width, int height) =>
+            BGRAtoYuv420(src, 4, 0, 2, dst, width, height, interleavedChroma: true);
+
+        /// <summary>RGB24 (R, G, B bytes) -> NV12: as <see cref="BGRAtoNV12"/>.</summary>
+        public static void RGB24toNV12(ReadOnlySpan<byte> src, Span<byte> dst, int width, int height) =>
+            BGRAtoYuv420(src, 3, 2, 0, dst, width, height, interleavedChroma: true);
+
+        /// <summary>I420 -> NV12: the Y plane as is, U and V interleaved.</summary>
+        public static void I420toNV12(ReadOnlySpan<byte> src, Span<byte> dst, int width, int height)
+        {
+            int ySize = width * height, uvPlaneSize = (width / 2) * (height / 2);
+            src.Slice(0, ySize).CopyTo(dst);
+            var u = src.Slice(ySize, uvPlaneSize);
+            var v = src.Slice(ySize + uvPlaneSize, uvPlaneSize);
+            var uv = dst.Slice(ySize);
+            for (int k = 0; k < uvPlaneSize; k++) { uv[2 * k] = u[k]; uv[2 * k + 1] = v[k]; }
+        }
+
+        /// <summary>
+        /// Packed RGB (stride <paramref name="bytesPerPixel"/>, blue at <paramref name="blueAt"/>, red at <paramref name="redAt"/>, green at 1) to
+        /// YUV 4:2:0, planar (I420) or with interleaved chroma (NV12).
+        /// </summary>
+        static void BGRAtoYuv420(ReadOnlySpan<byte> src, int bytesPerPixel, int blueAt, int redAt, Span<byte> dst, int width, int height, bool interleavedChroma)
+        {
+            int ySize = width * height, uvWidth = width / 2, uvPlaneSize = uvWidth * (height / 2);
             for (int j = 0; j < height; j++)
-            {
                 for (int i = 0; i < width; i++)
                 {
-                    int px = (j * width + i) * 4;
-                    int b = src[px], g = src[px + 1], r = src[px + 2];
-
-                    yDst[j * width + i] = (byte)Clamp((int)(0.257 * r + 0.504 * g + 0.098 * b) + 16);
-
-                    if ((j & 1) == 0 && (i & 1) == 0)
-                    {
-                        int uvIdx = (j / 2) * uvWidth + (i / 2);
-                        uDst[uvIdx] = (byte)Clamp((int)(-0.148 * r - 0.291 * g + 0.439 * b) + 128);
-                        vDst[uvIdx] = (byte)Clamp((int)(0.439 * r - 0.368 * g - 0.071 * b) + 128);
-                    }
+                    int px = (j * width + i) * bytesPerPixel;
+                    dst[j * width + i] = (byte)Bt601.Y(src[px + redAt], src[px + 1], src[px + blueAt]);
                 }
-            }
+            for (int cj = 0; cj < height / 2; cj++)
+                for (int ci = 0; ci < uvWidth; ci++)
+                {
+                    float r = 0, g = 0, b = 0;
+                    for (int dy = 0; dy < 2; dy++)
+                        for (int dx = 0; dx < 2; dx++)
+                        {
+                            int px = ((2 * cj + dy) * width + 2 * ci + dx) * bytesPerPixel;
+                            r += src[px + redAt]; g += src[px + 1]; b += src[px + blueAt];
+                        }
+                    r *= 0.25f; g *= 0.25f; b *= 0.25f;
+                    int k = cj * uvWidth + ci;
+                    byte u = (byte)Bt601.U(r, g, b), v = (byte)Bt601.V(r, g, b);
+                    if (interleavedChroma) { dst[ySize + 2 * k] = u; dst[ySize + 2 * k + 1] = v; }
+                    else { dst[ySize + k] = u; dst[ySize + uvPlaneSize + k] = v; }
+                }
         }
 
         /// <summary>
@@ -254,16 +287,16 @@ namespace SpawnDev.MultiMedia
 
                     // Pixel 0
                     int px = (j * width + i) * 4;
-                    dst[px] = (byte)Clamp(y0 + (int)(1.772 * u));
-                    dst[px + 1] = (byte)Clamp(y0 - (int)(0.344 * u) - (int)(0.714 * v));
-                    dst[px + 2] = (byte)Clamp(y0 + (int)(1.402 * v));
+                    dst[px] = (byte)Bt601.B(y0, u);
+                    dst[px + 1] = (byte)Bt601.G(y0, u, v);
+                    dst[px + 2] = (byte)Bt601.R(y0, v);
                     dst[px + 3] = 255;
 
                     // Pixel 1
                     px += 4;
-                    dst[px] = (byte)Clamp(y1 + (int)(1.772 * u));
-                    dst[px + 1] = (byte)Clamp(y1 - (int)(0.344 * u) - (int)(0.714 * v));
-                    dst[px + 2] = (byte)Clamp(y1 + (int)(1.402 * v));
+                    dst[px] = (byte)Bt601.B(y1, u);
+                    dst[px + 1] = (byte)Bt601.G(y1, u, v);
+                    dst[px + 2] = (byte)Bt601.R(y1, v);
                     dst[px + 3] = 255;
                 }
             }

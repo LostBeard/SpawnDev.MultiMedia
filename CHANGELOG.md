@@ -1,5 +1,30 @@
 # Changelog
 
+## 2.6.0 (unreleased; 2.6.0-local.1 on the local feed, 2026-11-18)
+
+### Added
+- **H.264 rate control**: `H264EncoderOptions` (`RateControl`: `ConstantBitrate`, `Quality` 1..100, `ConstantQp` 0..51) and
+  `VideoEncoderFactory.CreateH264(H264EncoderOptions)`; the old `CreateH264(width, height, fps, bitrateBps)` is unchanged (constant bitrate).
+  Constant QP is the closest Media Foundation gets to x264's CRF. Measured (320 x 240 detailed picture, one I-frame): QP 12 / 28 / 44 give
+  49.2 / 33.7 / 29.9 dB luma PSNR in 43550 / 11947 / 766 bytes; quality 20 / 90 give 30.0 / 42.8 dB.
+- `PixelFormatConverter.BGRAtoNV12`, `RGB24toNV12`, `I420toNV12` (the encoder's input from RGB pictures); `Bt601`, the conversion maths shared
+  by the CPU converter and the ILGPU kernels.
+
+### Fixed
+- **YUV to RGB decoded video-range YUV as full range.** NV12 / I420 / YUY2 to BGRA (CPU and GPU) used Y + 1.402 V etc. without the 16 offset and
+  the 255 / 219 gain, while BGRA to I420 wrote BT.601 limited range: camera and H.264-decoded pictures came out washed out (white 235 instead of
+  255) and BGRA -> YUV -> BGRA did not return its colours. All paths are BT.601 limited range now, rounded instead of truncated, and BGRA to
+  I420's chroma is the 2 x 2 block's average instead of its top-left pixel. (MJPEG keeps full range: JFIF is full range.)
+- `eAVEncCommonRateControlMode_Quality` was 2 (UnconstrainedVBR in codecapi.h); it is 3. It was not used before 2.6.0.
+
+### Changed
+- SpawnDev.SpawnJS 3.0.7 -> 3.0.10, SpawnDev.ILGPU 5.4.15 -> 5.4.36 (demo: SpawnDev.SpawnJS.Blazor 3.0.7 -> 3.0.8).
+
+### Tests
+- Desktop (DemoConsole, NV1080, RX 590): 82 passed; the 7 video-capture tests fail here because OBS Virtual Camera is installed but not running
+  (the unmodified 2.5.0 fails them the same way). New: limited-range black / white exact, BGRA -> NV12 round trips (<= 2 levels on 2 x 2
+  constant colours, <= 4 on a gradient), constant QP and quality monotonic.
+
 ## 2.5.0 (2026-11-03)
 
 ### Added

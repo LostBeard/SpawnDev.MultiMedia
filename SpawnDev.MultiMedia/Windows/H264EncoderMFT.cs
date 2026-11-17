@@ -49,8 +49,18 @@ namespace SpawnDev.MultiMedia.Windows
         /// input). Low-latency mode is enabled via <c>CODECAPI_AVLowLatencyMode</c> so the
         /// encoder does not buffer frames for look-ahead - required for real-time WebRTC.
         /// </summary>
-        public H264EncoderMFT(int width, int height, int fps, int bitrateBps)
+        public H264EncoderMFT(int width, int height, int fps, int bitrateBps) : this(new H264EncoderOptions(width, height, fps, bitrateBps)) { }
+
+        /// <summary>The rate control the encoder was made with.</summary>
+        public H264EncoderOptions Options { get; }
+
+        /// <summary>Construct + configure the MFT with <paramref name="options"/> (constant bitrate, quality or constant QP).</summary>
+        public H264EncoderMFT(H264EncoderOptions options)
         {
+            Options = options;
+            int width = options.Width, height = options.Height, fps = options.FrameRate, bitrateBps = options.BitrateBps;
+            if (options.Quality is < 1 or > 100) throw new ArgumentOutOfRangeException(nameof(options), "Quality is 1..100.");
+            if (options.Qp is < 0 or > 51) throw new ArgumentOutOfRangeException(nameof(options), "QP is 0..51.");
             if (width <= 0 || (width & 1) != 0) throw new ArgumentOutOfRangeException(nameof(width), "Width must be positive + even (NV12 requires even dimensions).");
             if (height <= 0 || (height & 1) != 0) throw new ArgumentOutOfRangeException(nameof(height), "Height must be positive + even.");
             if (fps <= 0) throw new ArgumentOutOfRangeException(nameof(fps));
@@ -89,17 +99,43 @@ namespace SpawnDev.MultiMedia.Windows
             int hr = _codecApi!.SetValue(ref lowLatencyKey, ref lowLatencyVal);
             MF.ThrowOnFailure(hr);
 
-            // Constant bitrate rate-control. Default is VBR; CBR is easier for RTP.
             var rcKey = H264MFT.CODECAPI_AVEncCommonRateControlMode;
-            var rcVal = H264MFT.PROPVARIANT.FromUInt32(H264MFT.eAVEncCommonRateControlMode_CBR);
-            hr = _codecApi.SetValue(ref rcKey, ref rcVal);
-            MF.ThrowOnFailure(hr);
+            if (Options.RateControl == H264RateControl.ConstantBitrate)
+            {
+                // Constant bitrate rate-control. Default is VBR; CBR is easier for RTP.
+                var rcVal = H264MFT.PROPVARIANT.FromUInt32(H264MFT.eAVEncCommonRateControlMode_CBR);
+                hr = _codecApi.SetValue(ref rcKey, ref rcVal);
+                MF.ThrowOnFailure(hr);
 
-            // Mean bitrate (used when rate-control is CBR).
-            var brKey = H264MFT.CODECAPI_AVEncCommonMeanBitRate;
-            var brVal = H264MFT.PROPVARIANT.FromUInt32((uint)BitrateBps);
-            hr = _codecApi.SetValue(ref brKey, ref brVal);
-            MF.ThrowOnFailure(hr);
+                // Mean bitrate (used when rate-control is CBR).
+                var brKey = H264MFT.CODECAPI_AVEncCommonMeanBitRate;
+                var brVal = H264MFT.PROPVARIANT.FromUInt32((uint)BitrateBps);
+                hr = _codecApi.SetValue(ref brKey, ref brVal);
+                MF.ThrowOnFailure(hr);
+            }
+            else
+            {
+                // Quality rate control: every frame at a quality (CODECAPI_AVEncCommonQuality, 1..100) or a fixed QP (CODECAPI_AVEncVideoEncodeQP:
+                // the default QP in bits 0-15, then the I, P and B frames' in bits 16-31, 32-47, 48-63: all four set to the one QP).
+                var rcVal = H264MFT.PROPVARIANT.FromUInt32(H264MFT.eAVEncCommonRateControlMode_Quality);
+                hr = _codecApi.SetValue(ref rcKey, ref rcVal);
+                MF.ThrowOnFailure(hr);
+                if (Options.RateControl == H264RateControl.Quality)
+                {
+                    var qKey = H264MFT.CODECAPI_AVEncCommonQuality;
+                    var qVal = H264MFT.PROPVARIANT.FromUInt32((uint)Options.Quality);
+                    hr = _codecApi.SetValue(ref qKey, ref qVal);
+                    MF.ThrowOnFailure(hr);
+                }
+                else
+                {
+                    ulong qp = (ulong)Options.Qp;
+                    var qpKey = H264MFT.CODECAPI_AVEncVideoEncodeQP;
+                    var qpVal = H264MFT.PROPVARIANT.FromUInt64(qp | (qp << 16) | (qp << 32) | (qp << 48));
+                    hr = _codecApi.SetValue(ref qpKey, ref qpVal);
+                    MF.ThrowOnFailure(hr);
+                }
+            }
         }
 
         private void ConfigureOutputType()
