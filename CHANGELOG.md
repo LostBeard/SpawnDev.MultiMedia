@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 2.6.1 (2026-11-18)
+
+### Changed
+- SpawnDev.ILGPU 5.4.36 -> 5.4.37: CUDA page-locked arrays can be made off the accelerator's thread; the Wasm worker reuses kernel
+  instances across dispatches.
 
 ### Tests
 - The desktop video tests' camera: OBS Virtual Camera stays preferred, but when it will not open (OBS installed, its virtual camera not
